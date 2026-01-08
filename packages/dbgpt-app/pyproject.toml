@@ -49,7 +49,9 @@ dbgpts = [
 
 [tool.uv]
 managed = true
-dev-dependencies = []
+
+[dependency-groups]
+dev = []
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dbgpt_app"]

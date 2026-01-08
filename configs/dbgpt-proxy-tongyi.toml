@@ -1,17 +1,30 @@
 [system]
 # Load language from environment variable(It is set by the hook)
 language = "${env:DBGPT_LANG:-en}"
+log_level = "INFO"
 api_keys = []
 encrypt_key = "your_secret_key"
 
 # Server Configurations
 [service.web]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = 5670
 
+# DB-GPT METADATA DATABASE设置
 [service.web.database]
 type = "sqlite"
 path = "pilot/meta_data/dbgpt.db"
+
+# vector database
+[rag]
+## 基础配置
+chunk_size=1000
+chunk_overlap=0
+similarity_top_k=5
+similarity_score_threshold=0.0
+max_chunks_once_load=10
+max_threads=1
+rerank_top_k=3
 
 [rag.storage]
 [rag.storage.vector]
@@ -21,13 +34,14 @@ persist_path = "pilot/data"
 # Model Configurations
 [models]
 [[models.llms]]
-name = "qwen-plus"
+name = "qwen3-max"
 provider = "${env:LLM_MODEL_PROVIDER:-proxy/tongyi}"
 api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 api_key = "${env:DASHSCOPE_API_KEY}"
 
 [[models.embeddings]]
-name = "text-embedding-v3"
+name = "text-embedding-v4"
+## embedding 使用本地model
 provider = "${env:EMBEDDING_MODEL_PROVIDER:-proxy/tongyi}"
 api_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
 api_key = "${env:DASHSCOPE_API_KEY}"

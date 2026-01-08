@@ -102,11 +102,8 @@ flash_attn = [
     "dbgpt-acc-flash-attn"
 ]
 
-[dependency-groups]
-
 [tool.uv]
 managed = true
-dev-dependencies = []
 conflicts = [
     [
         { extra = "auto" },
@@ -116,6 +113,9 @@ conflicts = [
         { extra = "cuda124" },
     ],
 ]
+
+[dependency-groups]
+dev = []
 
 # [[tool.uv.index]]
 # name = "pytorch-cpu"

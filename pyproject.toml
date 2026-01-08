@@ -22,6 +22,11 @@ dbgpt-acc-auto = { workspace = true }
 dbgpt-acc-flash-attn = { workspace = true }
 dbgpt-sandbox = { workspace = true }
 
+# 配置默认 PyPI 镜像源（清华大学镜像，国内访问更快）
+[[tool.uv.index]]
+default = true
+url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+
 [[tool.uv.index]]
 name = "testpypi"
 url = "https://test.pypi.org/simple/"
@@ -41,7 +46,9 @@ members = [
 
 [tool.uv]
 managed = true
-dev-dependencies = [
+
+[dependency-groups]
+dev = [
     "pip",
     "tomli>=2.0.2",
     "tomli-w>=1.1.0",
@@ -83,3 +90,26 @@ select = ["E", "F", "I"]
 [tool.ruff.lint.isort]
 # Specify the local modules (first-party)
 known-first-party = ["dbgpt", "dbgpt_acc_auto", "dbgpt_client", "dbgpt_ext", "dbgpt_serve", "dbgpt_app", "dbgpt_sandbox"]
+
+[tool.pyright]
+# Pyright/Pylance configuration for better IDE navigation
+include = ["packages/**/src"]
+exclude = [
+    "**/__pycache__",
+    "**/node_modules",
+    ".venv",
+    ".venv.make",
+    "venv",
+    "env",
+    ".env",
+    "**/*.pyc"
+]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+useLibraryCodeForTypes = true
+reportMissingImports = "warning"
+reportMissingTypeStubs = false
+reportUnusedImport = "information"
+reportUnusedClass = "information"
+reportUnusedFunction = "information"
+reportUnusedVariable = "information"
