@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from dbgpt._private.pydantic import BaseModel, Field
 
@@ -17,7 +17,7 @@ class EvaluateServeRequest(BaseModel):
     scene_key: Optional[str] = Field(None, description="evaluation scene key")
     scene_value: Optional[str] = Field(None, description="evaluation scene value")
     datasets_name: Optional[str] = Field(None, description="evaluation datasets name")
-    datasets: Optional[List[dict]] = Field(None, description="datasets")
+    datasets: Optional[Union[str, List[dict]]] = Field(None, description="datasets")
     evaluate_metrics: Optional[List[str]] = Field(
         None, description="evaluation metrics"
     )
@@ -95,6 +95,21 @@ class BenchmarkServeRequest(BaseModel):
     log_info: Optional[str] = Field(None, description="evaluation task error message")
     gmt_create: Optional[str] = Field(None, description="create time")
     gmt_modified: Optional[str] = Field(None, description="modified time")
+    evaluation_env: Optional[str] = Field(
+        None, description="benchmark dataset env, e.g. DEV, TEST"
+    )
+    benchmark_type: Optional[str] = Field(
+        None, description="execute benchmark type, llm or agent"
+    )
+    api_url: Optional[str] = Field(None, description="api url")
+    http_method: Optional[str] = Field(None, description="http method")
+    headers: Optional[dict] = Field(None, description="http headers")
+    parse_strategy: Optional[str] = Field(
+        None, description="agent response parse strategy"
+    )
+    response_mapping: Optional[dict] = Field(
+        None, description="agent  response extract result mapping"
+    )
 
 
 class BenchmarkServeResponse(BenchmarkServeRequest):
