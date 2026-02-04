@@ -45,6 +45,10 @@ from dbgpt_app.openapi.api_view_model import (
     Result,
 )
 from dbgpt_app.scene import BaseChat, ChatFactory, ChatParam, ChatScene
+from dbgpt_app.util.conv_logger import (
+    add_conv_log_handler,
+    remove_conv_log_handler,
+)
 from dbgpt_serve.agent.db.gpts_app import UserRecentAppsDao, adapt_native_app_model
 from dbgpt_serve.core import blocking_func_to_async
 from dbgpt_serve.datasource.manages.db_conn_info import DBConfig, DbTypeInfo
@@ -586,6 +590,7 @@ async def chat_completions(
                         dialogue.incremental,
                         dialogue.model_name,
                         openai_format=dialogue.incremental,
+                        conv_uid=dialogue.conv_uid,
                     ),
                     headers=headers,
                     media_type="text/plain",
@@ -698,10 +703,14 @@ async def flow_stream_generator(func, incremental: bool, model_name: str):
 
 
 async def no_stream_generator(chat, model_name: str, conv_uid: Optional[str] = None):
-    with root_tracer.start_span("no_stream_generator"):
-        msg = await chat.nostream_call()
-        stream_id = conv_uid or f"chatcmpl-{str(uuid.uuid1())}"
-        yield _v1_create_completion_response(msg, None, model_name, stream_id)
+    conv_handler = add_conv_log_handler(conv_uid)
+    try:
+        with root_tracer.start_span("no_stream_generator"):
+            msg = await chat.nostream_call()
+            stream_id = conv_uid or f"chatcmpl-{str(uuid.uuid1())}"
+            yield _v1_create_completion_response(msg, None, model_name, stream_id)
+    finally:
+        remove_conv_log_handler(conv_handler)
 
 
 async def stream_generator(
@@ -731,6 +740,7 @@ async def stream_generator(
     msg = "[LLM_ERROR]: llm server has no output, maybe your prompt template is wrong."
 
     stream_id = conv_uid or f"chatcmpl-{str(uuid.uuid1())}"
+    conv_handler = add_conv_log_handler(conv_uid)
     try:
         if incremental and not openai_format:
             raise ValueError("Incremental response must be openai-compatible format.")
@@ -788,6 +798,8 @@ async def stream_generator(
         yield f"data: [SERVER_ERROR]{str(e)}\n\n"
         if incremental:
             yield "data: [DONE]\n\n"
+    finally:
+        remove_conv_log_handler(conv_handler)
 
 
 def message2Vo(message: dict, order, model_name) -> MessageVo:

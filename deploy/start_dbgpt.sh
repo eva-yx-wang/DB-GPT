@@ -6,7 +6,7 @@
 # 配置变量
 PROJECT_DIR="/home/datagroup/projects/DB-GPT"
 PID_FILE="${PROJECT_DIR}/deploy/dbgpt.pid"
-LOG_FILE="${PROJECT_DIR}/deploy/dbgpt.log"
+LOG_DIR="${PROJECT_DIR}/deploy/logs"
 CONFIG_FILE="configs/dbgpt-proxy-tongyi.toml"
 
 # 获取命令参数，默认为 start
@@ -143,15 +143,22 @@ start_service() {
     # 设置 PYTHONPATH
     export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}$(pwd)/packages/dbgpt-core/src:$(pwd)/packages/dbgpt-app/src:$(pwd)/packages:$(pwd)"
 
+    # 每个对话独立日志目录（由应用在运行期按 conv_uid 动态写入）
+    export DBGPT_CONV_LOG_DIR="${PROJECT_DIR}/deploy"
+    mkdir -p "${DBGPT_CONV_LOG_DIR}/chat_logs"
+
+    # 本次启动使用新日志文件：deploy/logs/日期-随机字符串.log
+    mkdir -p "$LOG_DIR"
+    RAND_STR=$(od -An -N4 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+    [ -z "$RAND_STR" ] && RAND_STR="${RANDOM}${RANDOM}"
+    LOG_FILE="${LOG_DIR}/$(date +%Y-%m-%d)-${RAND_STR}.log"
+
     # 启动服务（后台运行）
     echo "正在启动 DB-GPT 服务（后台模式）..."
     echo "配置文件: $CONFIG_FILE"
     echo "日志文件: $LOG_FILE"
     echo "PID 文件: $PID_FILE"
     echo ""
-
-    # 确保日志目录存在
-    mkdir -p "$(dirname "$LOG_FILE")"
 
     # 使用 nohup 在后台启动服务
     (
