@@ -62,7 +62,7 @@ class DorisConnector(RDBMSConnector):
         ignore_tables: Optional[List[str]] = None,
         include_tables: Optional[List[str]] = None,
         sample_rows_in_table_info: int = 3,
-        indexes_in_table_info: bool = False,
+        indexes_in_table_info: bool = True,  # 获取索引信息
         custom_table_info: Optional[Dict[str, str]] = None,
         view_support: bool = False,
     ):
@@ -214,9 +214,9 @@ class DorisConnector(RDBMSConnector):
             cursor = session.execute(
                 text(
                     """
-                    SELECT DEFAULT_CHARACTER_SET_NAME 
-                    FROM information_schema.SCHEMATA 
-                    where SCHEMA_NAME=database() 
+                    SELECT DEFAULT_CHARACTER_SET_NAME
+                    FROM information_schema.SCHEMATA
+                    where SCHEMA_NAME=database()
                     """
                 )
             )
@@ -311,6 +311,24 @@ class DorisConnector(RDBMSConnector):
                     "SELECT concat(TABLE_NAME,'(',group_concat(COLUMN_NAME,','),');') "
                     "FROM information_schema.columns "
                     "where TABLE_SCHEMA=database() "
+                    "GROUP BY TABLE_NAME"
+                )
+            )
+            results = cursor.fetchall()
+            return [x[0] for x in results]
+
+    def table_simple_info_for_tables(self, table_names: List[str]):
+        """Get table simple info only for the given table names."""
+        if not table_names:
+            return []
+        with self.session_scope() as session:
+            placeholders = ",".join(f'"{t}"' for t in table_names)
+            cursor = session.execute(
+                text(
+                    "SELECT concat(TABLE_NAME,'(',group_concat(COLUMN_NAME,','),');') "
+                    "FROM information_schema.columns "
+                    "where TABLE_SCHEMA=database() "
+                    f"AND TABLE_NAME IN ({placeholders}) "
                     "GROUP BY TABLE_NAME"
                 )
             )

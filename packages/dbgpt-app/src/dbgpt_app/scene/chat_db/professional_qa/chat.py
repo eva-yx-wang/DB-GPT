@@ -97,31 +97,22 @@ class ChatWithDbQA(BaseChat):
         user_input = self.current_user_input.last_text
         table_infos = None
         if self.db_name:
-            get_db_raw = await self._detect_get_db_raw_intent(user_input)
-            if get_db_raw:
-                # 用户明确要求完整表结构时，从数据库拉取 table_simple_info
+            client = DBSummaryClient(system_app=self.system_app)
+            try:
+                table_infos = await blocking_func_to_async(
+                    self._executor,
+                    client.get_db_summary,
+                    self.db_name,
+                    user_input,
+                    self.top_k,
+                )
+            except Exception as e:
+                logger.error(f"Retrieved table info error: {str(e)}")
                 table_infos = await blocking_func_to_async(
                     self._executor, self.database.table_simple_info
                 )
                 if len(table_infos) > self.curr_config.schema_max_tokens:
                     table_infos = table_infos[: self.curr_config.schema_max_tokens]
-            else:
-                client = DBSummaryClient(system_app=self.system_app)
-                try:
-                    table_infos = await blocking_func_to_async(
-                        self._executor,
-                        client.get_db_summary,
-                        self.db_name,
-                        user_input,
-                        self.top_k,
-                    )
-                except Exception as e:
-                    logger.error(f"Retrieved table info error: {str(e)}")
-                    table_infos = await blocking_func_to_async(
-                        self._executor, self.database.table_simple_info
-                    )
-                    if len(table_infos) > self.curr_config.schema_max_tokens:
-                        table_infos = table_infos[: self.curr_config.schema_max_tokens]
 
         input_values = {
             "input": user_input,
