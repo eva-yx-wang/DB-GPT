@@ -21,6 +21,7 @@ Integration Packages
 | Spark       | ✅       | --extra datasource_spark        |
 | Oracle      | ✅       | --extra datasource_oracle       |
 | Gaussdb     | ✅       | --extra datasource_postgres     |
+| openGauss   | ✅       | --extra datasource_postgres     |
 
 
 # RAG Storage Providers
@@ -36,6 +37,6 @@ Integration Packages
 # Graph RAG Storage Providers
 
 | Provider | Supported | Install Packages |
-|----------|-----------|------------------|
-| TuGraph  | ✅         | --extra graph_rag|
-| Neo4j    | ❌         |                  |
+|----------|----------|------------------|
+| TuGraph  | ✅        | --extra graph_rag|
+| Neo4j    | ✅         |                  |

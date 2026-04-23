@@ -146,6 +146,7 @@ nltk_data
 pilot/data/
 pilot/nltk_data
 pilot/mock_datas/db-gpt-test.db.wal
+pilot/tmp/
 
 logswebserver.log.*
 .history/*
@@ -191,3 +192,18 @@ thirdparty
 configs/my
 .devcontainer/dev.toml
 test_docs
+
+# AI coding assistant configs
+.opencode/
+.cursor/
+.aone_copilot/
+.windsurf/
+.continue/
+.codeium/
+.github/copilot-instructions.md
+.claude/
+.codex/
+.trade/
+.qoder/
+.qwencode/
+.sisyphus/

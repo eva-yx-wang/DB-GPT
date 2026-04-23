@@ -2,7 +2,7 @@
 
 <p align="left">
 
-<img src="./assets/Twitter_LOGO.png" width="100%" />
+<img src="./assets/dbgpt_vision.png" width="100%" />
 </p>
 
 <div align="center">
@@ -127,12 +127,32 @@ DB-GPT இன் கட்டமைப்பு பின்வரும் ப�
 ---
 
 ![app_chat_v0 6](https://github.com/user-attachments/assets/a2f0a875-df8c-4f0d-89a3-eed321c02113)
+---
 
-![app_manage_chat_data_v0 6](https://github.com/user-attachments/assets/c8cc85bb-e3c2-4fab-8fb9-7b4b469d0611)
+## ஏன் DB-GPT?
 
-![chat_dashboard_display_v0 6](https://github.com/user-attachments/assets/b15d6ebe-54c4-4527-a16d-02fbbaf20dc9)
+### 1. முகவர் அடிப்படையான தரவு பகுப்பாய்வு
+பணிகளைத் திட்டமிடுங்கள், வேலையைப் படிகளாகப் பிரிங்கள், கருவிகளை அழைக்கவும், முழுமையான பகுப்பாய்வு பணிப்பாய்வுகளை முடிக்கவும்.
+![csv_data_analysis_demo](https://github.com/user-attachments/assets/4921fa40-20f7-4a9c-b908-c0b4e7caa9d6)
 
-![agent_prompt_awel_v0 6](https://github.com/user-attachments/assets/40761507-a1e1-49d4-b49a-3dd9a5ea41cc)
+### 2. தானியங்கி SQL + குறியீடு செயல்படுத்தல்
+தரவைக் கேட்க, தரவுத் தொகுப்புகளை சுத்தம் செய்ய, மெட்ரிக்கைக் கணக்கிட்டு, வெளியீடுகளை உருவாக்க SQL மற்றும் குறியீட்டை உருவாக்குங்கள்.
+![agentic_write_code](https://github.com/user-attachments/assets/aeebc2b8-6c50-4ebb-96fd-07b860faa044)
+![sql_query](https://github.com/user-attachments/assets/da45de20-3768-4f0d-ab20-e939ddf21361)
+
+### 3. பல-மூல தரவு அணுகல்
+கட்டமைக்கப்பட்ட மற்றும் கட்டமைக்கப்படாத மூலங்கள் உட்பட, தரவுத்தளங்கள், spreadsheetகள், ஆவணங்கள் மற்றும் அறிவு தளங்கள் முழுவதும் வேலை செய்யுங்கள்.
+
+### 4. திறன்கள்-இயக்கப்படும் நீட்சி
+துறை அறிவு, பகுப்பாய்வு முறைகள் மற்றும் செயல்படுத்தும் பணிப்பாய்வுகளை மீண்டும் பயன்படுத்தக்கூடிய திறன்களாகத் தொகுக்கவும்.
+
+![import_github_skill](https://github.com/user-attachments/assets/39f39c36-a014-4a2e-8e14-b3af3f1d2f1c)
+
+![agent_browse_use](https://github.com/user-attachments/assets/21864e9f-2179-4f6f-910f-18463ec2b46e)
+
+### 5. சாண்ட்பாக்ஸ் செயல்படுத்தல்
+பாதுகாப்பான, மிகவும் நம்பகமான பகுப்பாய்வுக்காகத் தனிமைப்படுத்தப்பட்ட சூழலில் குறியீடு மற்றும் கருவிகளை இயக்குங்கள்.
+![sandbox](https://github.com/user-attachments/assets/bfbd78e0-15e2-42ac-876f-5b91847aadc1)
 
 
 ## Installation / Quick Start 
@@ -297,8 +317,6 @@ LLaMA/LLaMA2, Baichuan, ChatGLM, Wenxin, Tongyi, Zhipu மற்றும் ப
 - ஆதரவு தரவுமூலங்கள்
 - [தரவுமூலங்கள்](http://docs.dbgpt.cn/docs/modules/connections)
 
-## படம்
-🌐 [AutoDL படம்](https://www.codewithgpu.com/i/eosphoros-ai/DB-GPT/dbgpt)
 
 ## பங்களிப்பு
 

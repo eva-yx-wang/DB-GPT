@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from dbgpt.core import LLMClient
 from dbgpt.util.annotations import PublicAPI
@@ -101,6 +101,7 @@ class Agent(ABC):
         messages: List[AgentMessage],
         sender: Optional[Agent] = None,
         prompt: Optional[str] = None,
+        stream_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """Think and reason about the current task goal.
 
@@ -202,7 +203,7 @@ class AgentContext:
     language: Optional[str] = None
     max_chat_round: int = 100
     max_retry_round: int = 10
-    max_new_tokens: int = 1024
+    max_new_tokens: int = 4096
     temperature: float = 0.5
     allow_format_str_template: Optional[bool] = False
     verbose: bool = False

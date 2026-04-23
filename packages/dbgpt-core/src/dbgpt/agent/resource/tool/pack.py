@@ -55,6 +55,10 @@ def _to_tool_list(
                 new_list.extend(parse_tool(t))
             return new_list
         elif ignore_error:
+            logger.warning(
+                f"_to_tool_list: unknown resource type={type(r).__name__}, "
+                f"name={getattr(r, 'name', '?')}, ignored"
+            )
             return []
         else:
             raise ValueError("Invalid tool resource type")
@@ -93,7 +97,8 @@ class ToolPack(ResourcePack):
             return []
         tools = _to_tool_list(resource, unpack=True, ignore_error=True)
         typed_tools = [cast(BaseTool, t) for t in tools]
-        return [ToolPack(typed_tools)]  # type: ignore
+        result = [ToolPack(typed_tools)]  # type: ignore
+        return result
 
     def add_command(
         self,
@@ -160,7 +165,7 @@ class ToolPack(ResourcePack):
         self,
         name: Optional[str] = None,
     ) -> BaseTool:
-        if not name and name not in self._resources:
+        if not name or name not in self._resources:
             raise ToolNotFoundException("No tool found for execution")
         return cast(BaseTool, self._resources[name])
 

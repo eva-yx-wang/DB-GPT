@@ -2,7 +2,7 @@
 
 <p align="left">
 
-<img src="./assets/Twitter_LOGO.png" width="100%" />
+<img src="./assets/dbgpt_vision.png" width="100%" />
 </p>
 
 <div align="center">
@@ -128,13 +128,30 @@ DB-GPT-യുടെ ആർക്കിടെക്ചർ ഇനിപ്പറ�
     - [dbgpt-ext](./packages/dbgpt-ext)
 ---
 
-![app_chat_v0 6](https://github.com/user-attachments/assets/a2f0a875-df8c-4f0d-89a3-eed321c02113)
+## എന്തിനാണ് DB-GPT?
 
-![app_manage_chat_data_v0 6](https://github.com/user-attachments/assets/c8cc85bb-e3c2-4fab-8fb9-7b4b469d0611)
+### 1. ഏജന്റ് അധിഷ്ഠിത ഡാറ്റാ അനലിസിസ്
+ടാസ്ക്കുകൾ പ്ലാൻ ചെയ്യുക, വര്ക്ക് സ്റ്റെപ്പുകളായി വിഭജിക്കുക, ടൂളുകൾ വിളിക്കുക, അനലിസിസ് വർക്ക്ഫ്ലോകൾ അവസാനിപ്പിക്കുക.
+![csv_data_analysis_demo](https://github.com/user-attachments/assets/4921fa40-20f7-4a9c-b908-c0b4e7caa9d6)
 
-![chat_dashboard_display_v0 6](https://github.com/user-attachments/assets/b15d6ebe-54c4-4527-a16d-02fbbaf20dc9)
+### 2. സ്വയംപ്രവര്ത്തിക്കുന്ന SQL + കോഡ് എക്സിക്യൂഷന്‍
+ഡാറ്റ ചോദിക്കാനും ഡാറ്റാസെറ്റുകൾ വൃത്തിയാക്കാനും മെട്രിക്കുകൾ കണക്കാക്കാനും ഔട്ട്പുട്ട്കൾ ഉത്പാദിപ്പിക്കാനും SQLഉം കോഡും സൃഷ്ടിക്കുക.
+![agentic_write_code](https://github.com/user-attachments/assets/aeebc2b8-6c50-4ebb-96fd-07b860faa044)
+![sql_query](https://github.com/user-attachments/assets/da45de20-3768-4f0d-ab20-e939ddf21361)
 
-![agent_prompt_awel_v0 6](https://github.com/user-attachments/assets/40761507-a1e1-49d4-b49a-3dd9a5ea41cc)
+### 3. മൾട്ടി-സോഴ്സ് ഡാറ്റ ആക്സസ്
+സ്ട്രക്ചേഡും അൺസ്ട്രക്ചേഡുമായ സോഴ്സുകളിലൂടെ പ്രവർത്തിക്കുക, ഡാറ്റാബേസുകൾ, സ്പ്രഡ്ഷീറ്റുകൾ, ഡോക്യുമെന്റുകളും നോളജ് ബേസുകളും ഉൾപ്പെടുന്നു.
+
+### 4. സ്കില്ല്-ഡ്രിവന്‍ എക്സ്റ്റെംസിബിലിറ്റി
+ഡൊമെയ്‌ന്‍ അറിവ്, അനലിസിസ് രീതികളും എക്സിക്യൂഷന്‍ വർക്ക്ഫ്ലോകളും പുനരുപയോഗിക്കാവുന്ന സ്കില്ലുകളായി പാക്കേജ് ചെയ്യുക.
+
+![import_github_skill](https://github.com/user-attachments/assets/39f39c36-a014-4a2e-8e14-b3af3f1d2f1c)
+
+![agent_browse_use](https://github.com/user-attachments/assets/21864e9f-2179-4f6f-910f-18463ec2b46e)
+
+### 5. സാന്ഡ്ബോക്സ് എക്സിക്യൂഷന്‍
+കൂടുതൽ സുരക്ഷിതവും കൂടുതൽ വിശ്വസനീയവുമായ അനലിസിസിനായി ഐസോലേറ്റഡ് എൻവയോണ്മെന്റിൽ കോഡും ടൂളുകളും റൺ ചെയ്യുക.
+![sandbox](https://github.com/user-attachments/assets/bfbd78e0-15e2-42ac-876f-5b91847aadc1)
 
 
 ## ഇൻസ്റ്റലേഷൻ / ക്വിക്ക് സ്റ്റാർട്ട് 

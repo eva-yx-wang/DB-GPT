@@ -1,7 +1,7 @@
 <img src="./assets/LOGO_SMALL.png" alt="Logo" style="vertical-align: middle; height: 24px;" /> DB-GPT: AI Native Data App Development framework with AWEL and Agents
 
 <p align="left">
-  <img src="./assets/Twitter_LOGO.png" width="100%" />
+  <img src="./assets/dbgpt_vision.png" width="100%" />
 </p>
 
 <div align="center">
@@ -127,13 +127,30 @@ DB-GPT की वास्तुकला निम्नलिखित चि�
     - [dbgpt-ext](./packages/dbgpt-ext)
 ---
 
-![app_chat_v0 6](https://github.com/user-attachments/assets/a2f0a875-df8c-4f0d-89a3-eed321c02113)
+## क्यों DB-GPT?
 
-![app_manage_chat_data_v0 6](https://github.com/user-attachments/assets/c8cc85bb-e3c2-4fab-8fb9-7b4b469d0611)
+### 1. एजेंटिक डेटा विश्लेषण
+कार्यों की योजना बनाएं, कार्य को चरणों में विभाजित करें, टूल्स को कॉल करें, और विश्लेषण वर्कफ़्लो को अंत तक पूरा करें।
+![csv_data_analysis_demo](https://github.com/user-attachments/assets/4921fa40-20f7-4a9c-b908-c0b4e7caa9d6)
 
-![chat_dashboard_display_v0 6](https://github.com/user-attachments/assets/b15d6ebe-54c4-4527-a16d-02fbbaf20dc9)
+### 2. स्वायत्त SQL + कोड निष्पादन
+डेटा को क्वेरी करने, डेटासेट साफ़ करने, मेट्रिक्स की गणना करने और आउटपुट उत्पन्न करने के लिए SQL और कोड जenerate करें।
+![agentic_write_code](https://github.com/user-attachments/assets/aeebc2b8-6c50-4ebb-96fd-07b860faa044)
+![sql_query](https://github.com/user-attachments/assets/da45de20-3768-4f0d-ab20-e939ddf21361)
 
-![agent_prompt_awel_v0 6](https://github.com/user-attachments/assets/40761507-a1e1-49d4-b49a-3dd9a5ea41cc)
+### 3. मल्टी-सोर्स डेटा एक्सेस
+संरचित और असंरचित स्रोतों के साथ काम करें, जिसमें डेटाबेस, स्प्रेडशीट, दस्तावेज़ और नॉलेज बेस शामिल हैं।
+
+### 4. स्किल्स-संचालित एक्स्टेंसिबिलिटी
+डोमेन ज्ञान, विश्लेषण विधियों और निष्पादन वर्कफ़्लो को पुन: प्रयोज्य स्किल्स में पैकेज करें।
+
+![import_github_skill](https://github.com/user-attachments/assets/39f39c36-a014-4a2e-8e14-b3af3f1d2f1c)
+
+![agent_browse_use](https://github.com/user-attachments/assets/21864e9f-2179-4f6f-910f-18463ec2b46e)
+
+### 5. सैंडबॉक्स्ड निष्पादन
+सुरक्षित, अधिक विश्वसनीय विश्लेषण के लिए अलग-थलग वातावरण में कोड और टूल्स चलाएं।
+![sandbox](https://github.com/user-attachments/assets/bfbd78e0-15e2-42ac-876f-5b91847aadc1)
 
 
 ## इंस्टॉलेशन / क्विक स्टार्ट 

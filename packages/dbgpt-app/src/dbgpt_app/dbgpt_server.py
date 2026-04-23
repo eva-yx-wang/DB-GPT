@@ -55,11 +55,16 @@ system_app = SystemApp(app)
 def mount_routers(app: FastAPI):
     """Lazy import to avoid high time cost"""
     from dbgpt_app.knowledge.api import router as knowledge_router
+    from dbgpt_app.openapi.api_v1.agentic_data_api import router as agentic_data_api
     from dbgpt_app.openapi.api_v1.api_v1 import router as api_v1
     from dbgpt_app.openapi.api_v1.editor.api_editor_v1 import (
         router as api_editor_route_v1,
     )
+    from dbgpt_app.openapi.api_v1.examples_api import router as examples_router
     from dbgpt_app.openapi.api_v1.feedback.api_fb_v1 import router as api_fb_v1
+    from dbgpt_app.openapi.api_v1.python_upload_api import (
+        router as python_upload_router,
+    )
     from dbgpt_app.openapi.api_v2 import router as api_v2
     from dbgpt_serve.agent.app.controller import router as gpts_v1
     from dbgpt_serve.agent.app.endpoints import router as app_v2
@@ -70,6 +75,9 @@ def mount_routers(app: FastAPI):
     app.include_router(api_fb_v1, prefix="/api", tags=["FeedBack"])
     app.include_router(gpts_v1, prefix="/api", tags=["GptsApp"])
     app.include_router(app_v2, prefix="/api", tags=["App"])
+    app.include_router(python_upload_router, prefix="/api", tags=["PythonUpload"])
+    app.include_router(examples_router, prefix="/api", tags=["Examples"])
+    app.include_router(agentic_data_api, prefix="/api", tags=["AgenticData"])
 
     app.include_router(knowledge_router, tags=["Knowledge"])
 
@@ -81,10 +89,11 @@ def mount_routers(app: FastAPI):
 
 
 def mount_static_files(app: FastAPI, param: ApplicationConfig):
+    package_dir = os.path.dirname(os.path.abspath(__file__))
     if param.service.web.new_web_ui:
-        static_file_path = os.path.join(ROOT_PATH, "src", "dbgpt_app/static/web")
+        static_file_path = os.path.join(package_dir, "static", "web")
     else:
-        static_file_path = os.path.join(ROOT_PATH, "src", "dbgpt_app/static/old_web")
+        static_file_path = os.path.join(package_dir, "static", "old_web")
 
     os.makedirs(STATIC_MESSAGE_IMG_PATH, exist_ok=True)
     app.mount(
@@ -95,6 +104,24 @@ def mount_static_files(app: FastAPI, param: ApplicationConfig):
     app.mount(
         "/_next/static", StaticFiles(directory=static_file_path + "/_next/static")
     )
+
+    # Serve the Next.js dynamic route page for /share/{token}.
+    # Next.js static export produces share/[token]/index.html (literal directory
+    # name "[token]"), but FastAPI StaticFiles cannot resolve dynamic segments.
+    # Register explicit routes *before* the catch-all StaticFiles mount so that
+    # /share/<any-token> is served correctly.
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+
+    share_html = os.path.join(static_file_path, "share", "[token]", "index.html")
+
+    @app.get("/share/{token}")
+    @app.get("/share/{token}/")
+    async def _share_page_fallback(token: str):
+        if os.path.isfile(share_html):
+            return FileResponse(share_html, media_type="text/html")
+        raise HTTPException(status_code=404, detail="Page not found")
+
     app.mount("/", StaticFiles(directory=static_file_path, html=True), name="static")
 
     app.mount(
@@ -143,6 +170,42 @@ def initialize_app(param: ApplicationConfig, args: List[str] = None):
 
     # After init, when the database is ready
     system_app.after_init()
+
+    # Register default data sources
+    try:
+        from dbgpt.configs.model_config import PILOT_PATH, ROOT_PATH
+        from dbgpt_serve.datasource.manages.connect_config_db import ConnectConfigDao
+
+        dao = ConnectConfigDao()
+        db_name = "Walmart_Sales"
+        if not dao.get_by_names(db_name):
+            candidate_paths = [
+                os.path.join(PILOT_PATH, "examples", "Walmart_Sales.db"),
+                os.path.join(
+                    ROOT_PATH, "docker", "examples", "dashboard", "Walmart_Sales.db"
+                ),
+            ]
+            db_absolute_path = next(
+                (p for p in candidate_paths if os.path.isfile(p)), None
+            )
+            if db_absolute_path is None:
+                logger.info(
+                    f"Skipping default data source '%s': file not found in any "
+                    f"{db_name} at {candidate_paths}"
+                )
+            else:
+                dao.add_file_db(
+                    db_name=db_name,
+                    db_type="sqlite",
+                    db_path=db_absolute_path,
+                    comment="Default Walmart Sales example database",
+                )
+                logger.info(
+                    f"Successfully registered default data source: "
+                    f"{db_name} at {db_absolute_path}"
+                )
+    except Exception as e:
+        logger.error(f"Failed to register default data sources: {str(e)}")
 
     binding_port = web_config.port
     binding_host = web_config.host

@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import logging
 import os
@@ -61,10 +62,6 @@ CFG = Config()
 CHAT_FACTORY = ChatFactory()
 logger = logging.getLogger(__name__)
 knowledge_service = KnowledgeService()
-
-model_semaphore = None
-global_counter = 0
-
 
 user_recent_app_dao = UserRecentAppsDao()
 
@@ -436,9 +433,34 @@ async def file_read(
 ):
     logger.info(f"file_read:{conv_uid},{file_key}")
     file_client = FileClient()
-    res = await file_client.read_file(conv_uid=conv_uid, file_key=file_key)
-    df = pd.read_excel(res, index_col=False)
-    return Result.succ(df.to_json(orient="records", date_format="iso", date_unit="s"))
+    res = file_client.read_file(conv_uid=conv_uid, file_key=file_key)
+    _, file_extension = os.path.splitext(file_key)
+    file_extension = file_extension.lower()
+    try:
+        if file_extension in [".xls", ".xlsx"]:
+            df = pd.read_excel(io.BytesIO(res), index_col=False)
+            return Result.succ(
+                df.to_json(orient="records", date_format="iso", date_unit="s")
+            )
+        if file_extension in [".csv", ".tsv"]:
+            sep = "\t" if file_extension == ".tsv" else ","
+            df = pd.read_csv(io.BytesIO(res), sep=sep)
+            return Result.succ(
+                df.to_json(orient="records", date_format="iso", date_unit="s")
+            )
+        if file_extension in [".json", ".jsonl"]:
+            df = pd.read_json(io.BytesIO(res), lines=file_extension == ".jsonl")
+            return Result.succ(
+                df.to_json(orient="records", date_format="iso", date_unit="s")
+            )
+    except Exception as e:
+        logger.exception("file_read parse failed")
+        return Result.failed(msg=f"file_read parse failed: {e}")
+
+    try:
+        return Result.succ(res.decode("utf-8"))
+    except Exception:
+        return Result.succ(str(res))
 
 
 def get_hist_messages(conv_uid: str, user_name: str = None):
@@ -517,6 +539,14 @@ async def chat_completions(
     )
     dialogue.user_name = user_token.user_id if user_token else dialogue.user_name
     dialogue = adapt_native_app_model(dialogue)
+
+    # Handle knowledge space selection from ext_info for normal chat mode
+    if dialogue.chat_mode == ChatScene.ChatNormal.value() and dialogue.ext_info:
+        knowledge_space = dialogue.ext_info.get("knowledge_space")
+        if knowledge_space:
+            # Switch to chat_knowledge mode with selected space
+            dialogue.chat_mode = ChatScene.ChatKnowledge.value()
+            dialogue.select_param = knowledge_space
     headers = {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",

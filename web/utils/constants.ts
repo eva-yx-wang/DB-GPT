@@ -35,6 +35,11 @@ export const MODEL_ICON_INFO: Record<string, ModelIconInfo> = {
     icon: '/models/moonshot.png',
     patterns: ['moonshot', 'kimi'],
   },
+  minimax: {
+    label: 'MiniMax',
+    icon: '/models/minimax.png',
+    patterns: ['minimax', 'm2.7', 'm2.5', 'm2.1', 'm2'],
+  },
   doubao: {
     label: 'Doubao',
     icon: '/models/doubao.png',
@@ -59,6 +64,11 @@ export const MODEL_ICON_INFO: Record<string, ModelIconInfo> = {
     label: 'Vicuna',
     icon: '/models/vicuna.jpeg',
     patterns: ['vicuna'],
+  },
+  'glm-4': {
+    label: 'GLM-4.7',
+    icon: '/models/glm4.png',
+    patterns: ['glm-4'],
   },
   chatglm: {
     label: 'ChatGLM',
@@ -299,6 +309,11 @@ export const dbMapper: Record<DBType, { label: string; icon: string; desc: strin
     label: 'GaussDB',
     icon: '/icons/gaussdb.png',
     desc: "Huawei's distributed database with PostgreSQL compatibility",
+  },
+  openGauss: {
+    label: 'openGauss',
+    icon: '/icons/opengauss.png',
+    desc: 'Open-source relational database with PostgreSQL compatibility.',
   },
   vertica: {
     label: 'Vertica',

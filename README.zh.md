@@ -1,7 +1,7 @@
-# <img src="./assets/LOGO_SMALL.png" alt="Logo" style="vertical-align: middle; height: 24px;" /> DB-GPT: AI原生数据应用开发框架
+# <img src="./assets/LOGO_SMALL.png" alt="Logo" style="vertical-align: middle; height: 24px;" /> DB-GPT：开源 Agentic AI 数据分析智能助手
 
 <p align="left">
-  <img src="./assets/Twitter_LOGO.png" width="100%" />
+  <img src="./assets/dbgpt_vision.png" width="100%" />
 </p>
 
 
@@ -50,95 +50,165 @@
 
 </div>
 
+> **一个开源的 AI 数据分析智能助手：连接你的数据，自主编写 SQL 与代码，在沙箱环境中运行 skills，把分析转化为报告、洞察与行动。**
+
 ## DB-GPT 是什么？
 
-🤖️ **DB-GPT是一个开源的AI原生数据应用开发框架(AI Native Data App Development framework with AWEL(Agentic Workflow Expression Language) and Agents)。**
+DB-GPT 是一个开源的 **Agentic AI 数据分析智能助手**，面向下一代 **AI + Data** 产品形态。
 
-目的是构建大模型领域的基础设施，通过开发多模型管理(SMMF)、Text2SQL效果优化、RAG框架以及优化、Multi-Agents框架协作、AWEL(智能体工作流编排)等多种技术能力，让围绕数据库构建大模型应用更简单，更方便。 
+它可以帮助用户和团队：
+- 连接 **数据库、CSV / Excel、数仓、知识库与文档**
+- 使用自然语言提问，并让 AI **自主编写 SQL**
+- 执行 **Python 与代码驱动的数据分析流程**
+- 加载并执行可复用的 **skills**
+- 自动生成 **图表、Dashboard、HTML 报告和分析总结**
+- 在 **沙箱环境** 中安全执行分析任务
 
-🚀 **数据3.0 时代，基于模型、数据库，企业/开发者可以用更少的代码搭建自己的专属应用。**
+DB-GPT 不只是一个助手界面，它同时也是一个平台，用于构建 **AI Native 数据智能体、工作流与应用**，底层支持 agents、AWEL、RAG 与多模型能力。
 
-### 架构方案
+## 为什么选择 DB-GPT？
 
-<p align="center">
-  <img src="./assets/dbgpt.png" width="800px" />
-</p>
+### 1. Agentic 数据分析
+它不只是回答问题，而是会进行任务规划、步骤拆解、工具调用和迭代式分析。
+![csv-data-analysis_skill](https://github.com/user-attachments/assets/de0073f6-6b69-42f1-9fd2-5b759ca88ed8)
 
-核心能力主要有以下几个部分:
-- **RAG(Retrieval Augmented Generation)**，RAG是当下落地实践最多，也是最迫切的领域，DB-GPT目前已经实现了一套基于RAG的框架，用户可以基于DB-GPT的RAG能力构建知识类应用。 
+### 2. 自主 SQL + 自主代码执行
+自动编写 SQL 和代码，用于查询数据、处理数据、计算指标并生成结果。
+![agentic_write_code](https://github.com/user-attachments/assets/aeebc2b8-6c50-4ebb-96fd-07b860faa044)
+![sql_query](https://github.com/user-attachments/assets/da45de20-3768-4f0d-ab20-e939ddf21361)
 
-- **GBI**：生成式BI是DB-GPT项目的核心能力之一，为构建企业报表分析、业务洞察提供基础的数智化技术保障。 
+### 3. 多数据源分析
+同时处理结构化与非结构化数据，包括数据库、表格文件、文档和知识库。
+![datasource](./assets/datasources.png)
 
-- **微调框架**:  模型微调是任何一个企业在垂直、细分领域落地不可或缺的能力，DB-GPT提供了完整的微调框架，实现与DB-GPT项目的无缝打通，在最近的微调中，基于spider的准确率已经做到了82.5%
+### 4. Skills 驱动的可扩展能力
+将领域知识、分析方法和执行流程沉淀为 skills，实现复用与扩展。
 
-- **数据驱动的Multi-Agents框架**:  DB-GPT提供了数据驱动的自进化Multi-Agents框架，目标是可以持续基于数据做决策与执行。 
+![import_github_skill](https://github.com/user-attachments/assets/39f39c36-a014-4a2e-8e14-b3af3f1d2f1c)
 
-- **数据工厂**: 数据工厂主要是在大模型时代，做可信知识、数据的清洗加工。 
+### 5. 沙箱安全执行
+在隔离环境中运行代码和工具，让分析过程更安全、更可控。
+![sandbox](https://github.com/user-attachments/assets/bfbd78e0-15e2-42ac-876f-5b91847aadc1)
 
-- **数据源**: 对接各类数据源，实现生产业务数据无缝对接到DB-GPT核心能力。 
+## 你可以用 DB-GPT 做什么？
 
-#### 子模块
-- [DB-GPT-Hub](https://github.com/eosphoros-ai/DB-GPT-Hub) 通过微调来持续提升Text2SQL效果 
-- [DB-GPT-Plugins](https://github.com/eosphoros-ai/DB-GPT-Plugins) DB-GPT 插件仓库, 兼容Auto-GPT
-- [GPT-Vis](https://github.com/eosphoros-ai/DB-GPT-Web) 可视化协议
-- [dbgpts](https://github.com/eosphoros-ai/dbgpts)  dbgpts 是官方提供的数据应用仓库, 包含数据智能应用, 智能体编排流程模版, 通用算子等构建在DB-GPT之上的资源。 
+- **分析 CSV / Excel 文件** 并生成可视化报告
+- **连接数据库** 自动生成数据库画像与分析报告
+- 用自然语言提问，让 AI **自动写 SQL**
+- 进行 **财报深度分析**，生成图表、分析结论与总结
+- 创建和复用 **SQL 分析技能**
+- 将 **代码、SQL、检索和工具调用** 组合成完整的 agentic 分析流程
+- 构建面向团队或产品的下一代 **AI + Data 智能助手**
 
+## 产品工作流
 
-#### DeepWiki
-- [DB-GPT](https://deepwiki.com/eosphoros-ai/DB-GPT)
-- [DB-GPT-HUB](https://deepwiki.com/eosphoros-ai/DB-GPT-Hub)
-- [dbgpts](https://deepwiki.com/eosphoros-ai/dbgpts)
+### 数据探索
+连接文件、数据库和知识库，在统一入口开始分析任务。
 
+### 规划与执行
+让 AI 进行任务推理、生成 SQL / 代码，并逐步完成分析。
 
+### 使用 Skills
+加载可复用的业务分析技能与领域工作流。
 
-#### Text2SQL 微调模型
-
-  |     LLM     |  Supported  | 
-  |:-----------:|:-----------:|
-  |    LLaMA    |      ✅     |
-  |   LLaMA-2   |      ✅     | 
-  |    BLOOM    |      ✅     | 
-  |   BLOOMZ    |      ✅     | 
-  |   Falcon    |      ✅     | 
-  |  Baichuan   |      ✅     | 
-  |  Baichuan2  |      ✅     | 
-  |  InternLM   |      ✅     |
-  |    Qwen     |      ✅     | 
-  |   XVERSE    |      ✅     | 
-  |  ChatGLM2   |      ✅     |  
-
-#### RAG生产落地实践架构
-<p align="center">
-  <img src="./assets/RAG-IN-ACTION.jpg" width="800px" />
-</p>
-
-
-## 效果演示
-
-### AI原生数据智能应用
----
-- [V0.7.0发布——一系列重大功能更新](https://www.yuque.com/eosphoros/dbgpt-docs/asweou4i9rhnwchm)
-  - [支持MCP协议](https://github.com/eosphoros-ai/DB-GPT/pull/2497)
-  - 支持DeepSeek-R1、QwQ-32B等推理模型
-  - 重构基础模块
-    - [dbgpt-app](./packages/dbgpt-app)
-    - [dbgpt-core](./packages/dbgpt-core)
-    - [dbgpt-serve](./packages/dbgpt-serve)
-    - [dbgpt-client](./packages/dbgpt-client)
-    - [dbgpt-accelerator](./packages/dbgpt-accelerator)
-    - [dbgpt-ext](./packages/dbgpt-ext)
-### Data Agents 
-
-![app_chat_v0 6](https://github.com/user-attachments/assets/a2f0a875-df8c-4f0d-89a3-eed321c02113)
-
-![app_manage_chat_data_v0 6](https://github.com/user-attachments/assets/c8cc85bb-e3c2-4fab-8fb9-7b4b469d0611)
-
-![chat_dashboard_display_v0 6](https://github.com/user-attachments/assets/b15d6ebe-54c4-4527-a16d-02fbbaf20dc9)
-
-![agent_prompt_awel_v0 6](https://github.com/user-attachments/assets/40761507-a1e1-49d4-b49a-3dd9a5ea41cc)
+### 生成报告
+自动输出图表、Dashboard、HTML 报告和决策结论。
 
 
-## 安装
+## 快速开始
+
+你可以通过一键安装脚本在几分钟内启动 DB-GPT（macOS / Linux）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eosphoros-ai/DB-GPT/main/scripts/install/install.sh | bash
+```
+
+也可以直接指定 profile 和 API Key：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eosphoros-ai/DB-GPT/main/scripts/install/install.sh \
+  | OPENAI_API_KEY=sk-xxx bash -s -- --profile openai
+```
+
+如果你想使用 Kimi 2.5（Moonshot API）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eosphoros-ai/DB-GPT/main/scripts/install/install.sh \
+  | MOONSHOT_API_KEY=sk-xxx bash -s -- --profile kimi
+```
+
+如果你想使用 MiniMax（OpenAI 兼容接口）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eosphoros-ai/DB-GPT/main/scripts/install/install.sh \
+  | MINIMAX_API_KEY=sk-xxx bash -s -- --profile minimax
+```
+
+如果你已经有本地 DB-GPT 仓库，也可以直接复用当前仓库，跳过 `~/.dbgpt/DB-GPT` 的重复 clone：
+
+```bash
+OPENAI_API_KEY=sk-xxx \
+  bash scripts/install/install.sh --profile openai --repo-dir "$(pwd)" --yes
+```
+
+如果你想在当前仓库里直接测试 Kimi 2.5：
+
+```bash
+MOONSHOT_API_KEY=sk-xxx \
+  bash scripts/install/install.sh --profile kimi --repo-dir "$(pwd)" --yes
+```
+
+如果你想在当前仓库里直接测试 MiniMax：
+
+```bash
+MINIMAX_API_KEY=sk-xxx \
+  bash scripts/install/install.sh --profile minimax --repo-dir "$(pwd)" --yes
+```
+
+安装完成后，使用生成的 profile 配置启动服务：
+
+```bash
+cd ~/.dbgpt/DB-GPT && uv run dbgpt start webserver --profile <profile>
+```
+
+然后打开 [http://localhost:5670](http://localhost:5670)。
+
+> **想先审阅安装脚本再执行？**
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/eosphoros-ai/DB-GPT/main/scripts/install/install.sh -o install.sh
+> less install.sh
+> bash install.sh --profile openai
+> ```
+
+### 通过 PyPI 安装
+
+从 PyPI 安装 DB-GPT，一条命令即可启动，无需克隆源码仓库。
+
+> **前置条件：** Python **3.10+**，推荐使用 [uv](https://docs.astral.sh/uv/getting-started/installation/) 包管理器，也支持 pip。
+
+**1. 安装**
+
+```bash
+# 推荐使用 uv
+uv pip install dbgpt-app
+
+# 或使用 pip
+pip install dbgpt-app
+```
+
+默认安装包含核心框架（CLI、FastAPI、Agent）、OpenAI 兼容 LLM 支持、DashScope / 通义支持、RAG 文档解析和 ChromaDB 向量存储。
+
+**2. 启动**
+
+```bash
+dbgpt start
+```
+
+首次运行时，交互式向导会引导你选择 LLM 提供商并输入 API Key，配置完成后服务自动启动。
+
+**3. 打开 Web 界面**
+
+访问 [http://localhost:5670](http://localhost:5670) — 开始使用！🎉
 
 ![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
@@ -171,29 +241,69 @@
 - [**AWEL**](https://www.yuque.com/eosphoros/dbgpt-docs/zozbzslbfk0m0op5)
 - [**FAQ**](https://www.yuque.com/eosphoros/dbgpt-docs/gomtc46qonmyt44l)
 
-## 特性一览
-- **私域问答&数据处理&RAG**
+## 核心能力
 
-  支持内置、多文件格式上传、插件自抓取等方式自定义构建知识库，对海量结构化，非结构化数据做统一向量存储与检索
+### Agentic 数据分析
+- 任务规划
+- 分步执行
+- 工具调用
+- 迭代式推理
 
-- **多数据源&GBI**
+### SQL + 代码执行
+- 自然语言转 SQL
+- Python 数据分析与处理
+- 指标计算
+- 图表生成
 
-  支持自然语言与Excel、数据库、数仓等多种数据源交互，并支持分析报告。
+### 多数据源访问
+- 关系型数据库
+- CSV / Excel
+- 文档
+- 知识库
+- 多源混合分析
 
-- **自动化微调**
+### Skills 与 Agents
+- 可复用 skills
+- 领域分析工作流
+- agent 编排
+- 可定制执行流程
 
-  围绕大语言模型、Text2SQL数据集、LoRA/QLoRA/Pturning等微调方法构建的自动化微调轻量框架, 让TextSQL微调像流水线一样方便。详见: [DB-GPT-Hub](https://github.com/eosphoros-ai/DB-GPT-Hub)
+### 报告与决策支持
+- 数据库画像报告
+- 财报分析报告
+- 可视化报告与 dashboard
+- 分析总结与业务洞察
 
-- **数据驱动的Agents插件**
+### 安全执行环境
+- 沙箱代码执行
+- 可控工具调用
+- 可复现的分析产物与 artifacts
 
-  支持自定义插件执行任务，原生支持Auto-GPT插件模型，Agents协议采用Agent Protocol标准
 
-- **多模型支持与管理**
+#### DeepWiki
+- [DB-GPT](https://deepwiki.com/eosphoros-ai/DB-GPT)
+- [DB-GPT-HUB](https://deepwiki.com/eosphoros-ai/DB-GPT-Hub)
+- [dbgpts](https://deepwiki.com/eosphoros-ai/dbgpts)
 
-  海量模型支持，包括开源、API代理等几十种大语言模型。如LLaMA/LLaMA2、Baichuan、ChatGLM、文心、通义、智谱等。当前已支持如下模型: 
+#### Text2SQL 微调模型
 
-  - 新增支持模型
-    <table>
+  |     LLM     |  Supported  | 
+  |:-----------:|:-----------:|
+  |    LLaMA    |      ✅     |
+  |   LLaMA-2   |      ✅     | 
+  |    BLOOM    |      ✅     | 
+  |   BLOOMZ    |      ✅     | 
+  |   Falcon    |      ✅     | 
+  |  Baichuan   |      ✅     | 
+  |  Baichuan2  |      ✅     | 
+  |  InternLM   |      ✅     |
+  |    Qwen     |      ✅     | 
+  |   XVERSE    |      ✅     | 
+  |  ChatGLM2   |      ✅     |
+
+### 支持模型
+    
+<table>
       <thead>
         <tr>
           <th>Provider</th>
@@ -316,17 +426,30 @@
     - [x] [Google·Bard](https://bard.google.com/)
     - [x] [Google·Gemini](https://makersuite.google.com/app/apikey)
 
-- **隐私安全**
+### 隐私安全
 
-  通过私有化大模型、代理脱敏等多种技术保障数据的隐私安全。
+通过私有化大模型、代理脱敏和沙箱执行等机制保障数据隐私与执行安全。
 
+### 数据源
 - [支持数据源](https://www.yuque.com/eosphoros/dbgpt-docs/rc4r27ybmdwg9472)
+
+## 愿景
+
+我们相信，未来的数据产品不应止于 Dashboard。
+
+下一代 **AI + Data** 产品将是：
+- **agentic**
+- **多数据源**
+- **skill-driven**
+- **sandboxed**
+- 能自主编写 **SQL 和代码**
+- 能把分析转化为 **报告、结论与行动**
+
+DB-GPT 希望帮助开发者与企业共同构建这样的未来。
 
 
 
 ## Image
-
-🌐 [AutoDL镜像](https://www.codewithgpu.com/i/eosphoros-ai/DB-GPT/dbgpt)
 
 🌐 [小程序云部署](https://www.yuque.com/eosphoros/dbgpt-docs/ek12ly8k661tbyn8)
 
