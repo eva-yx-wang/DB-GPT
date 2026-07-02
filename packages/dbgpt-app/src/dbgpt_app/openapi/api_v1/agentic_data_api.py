@@ -7,8 +7,8 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, File, Query, Request, UploadFile
@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 
 from dbgpt._private.config import Config
 from dbgpt._private.pydantic import BaseModel as _BaseModel
+from dbgpt.agent.core.context import ContextBudgetConfig
 from dbgpt.agent.resource.tool.base import tool
 from dbgpt.agent.skill.manage import get_skill_manager
 from dbgpt.component import ComponentType
@@ -35,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dbgpt.agent.core.memory.gpts import GptsMemory
+    from dbgpt.agent.resource.connector.manager import ConnectorManager
+    from dbgpt.agent.resource.tool.base import BaseTool
 
 REACT_AGENT_MEMORY_CACHE: Dict[str, "GptsMemory"] = {}
 
@@ -42,6 +45,111 @@ DEFAULT_SKILLS_DIR = SKILLS_DIR
 AUTO_DATA_MARKER_PATTERN = re.compile(
     r"###([A-Z0-9_]+)_START###\s*(.*?)\s*###\1_END###", re.DOTALL
 )
+
+
+def _validate_upload_filename(filename: str) -> str:
+    if "\x00" in filename:
+        raise ValueError("filename must not contain null bytes")
+
+    posix_path = PurePosixPath(filename)
+    windows_path = PureWindowsPath(filename)
+    if (
+        posix_path.is_absolute()
+        or windows_path.is_absolute()
+        or len(posix_path.parts) != 1
+        or len(windows_path.parts) != 1
+        or filename in {"", ".", ".."}
+    ):
+        raise ValueError("filename must be a plain file name")
+    return filename
+
+
+async def _resolve_model_context_tokens(
+    llm_client: Any, model_name: Optional[str]
+) -> Optional[int]:
+    """Resolve model context window from runtime model metadata."""
+    if not llm_client or not model_name:
+        return None
+
+    try:
+        metadata = await llm_client.get_model_metadata(model_name)
+        context_length = getattr(metadata, "context_length", None)
+        if isinstance(context_length, int) and context_length > 0:
+            return context_length
+    except Exception:
+        logger.debug(
+            "Failed to resolve context window for model %s", model_name, exc_info=True
+        )
+    return None
+
+
+async def _load_context_budget_config(
+    llm_client: Any = None,
+    model_name: Optional[str] = None,
+) -> ContextBudgetConfig:
+    """Build context budget config from app TOML and model metadata."""
+    defaults = ContextBudgetConfig()
+
+    def _value(agent_context: Any, field_name: str, default: Any) -> Any:
+        if agent_context is None:
+            return default
+        value = getattr(agent_context, field_name, default)
+        return default if value is None else value
+
+    try:
+        app_config = CFG.SYSTEM_APP.config.configs.get("app_config")
+        web_config = getattr(getattr(app_config, "service", None), "web", None)
+        agent_context = getattr(web_config, "agent_context", None)
+        max_context_tokens = _value(
+            agent_context, "max_context_tokens", defaults.max_context_tokens
+        )
+        return ContextBudgetConfig(
+            max_context_tokens=max_context_tokens,
+            warning_threshold=_value(
+                agent_context, "warning_threshold", defaults.warning_threshold
+            ),
+            error_threshold=_value(
+                agent_context, "error_threshold", defaults.error_threshold
+            ),
+            critical_threshold=_value(
+                agent_context, "critical_threshold", defaults.critical_threshold
+            ),
+            reserved_tokens=_value(
+                agent_context, "reserved_tokens", defaults.reserved_tokens
+            ),
+            min_keep_recent_rounds=_value(
+                agent_context,
+                "min_keep_recent_rounds",
+                defaults.min_keep_recent_rounds,
+            ),
+            max_compact_failures=_value(
+                agent_context,
+                "max_compact_failures",
+                defaults.max_compact_failures,
+            ),
+            max_observation_age_rounds=_value(
+                agent_context,
+                "max_observation_age_rounds",
+                defaults.max_observation_age_rounds,
+            ),
+            truncated_observation_max_chars=(
+                _value(
+                    agent_context,
+                    "truncated_observation_max_chars",
+                    defaults.truncated_observation_max_chars,
+                )
+            ),
+            min_keep_tokens=_value(
+                agent_context,
+                "min_keep_tokens",
+                defaults.min_keep_tokens,
+            ),
+        )
+    except Exception:
+        logger.debug(
+            "Failed to load agent context config; using defaults", exc_info=True
+        )
+        return defaults
 
 
 def _extract_auto_data_markers(text: str) -> tuple[str, Dict[str, str]]:
@@ -66,6 +174,66 @@ def _extract_auto_data_markers(text: str) -> tuple[str, Dict[str, str]]:
     cleaned = AUTO_DATA_MARKER_PATTERN.sub(_replace, text)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned, extracted
+
+
+def _parse_connector_ids(ext_info: Optional[Dict[str, Any]]) -> List[str]:
+    """Extract connector IDs from ``ext_info``.
+
+    Supports two shapes:
+    - ``ext_info.connector_ids`` — a list of UUID strings (preferred).
+    - ``ext_info.connector_id``  — a single UUID string (legacy back-compat).
+
+    Returns an empty list when no valid IDs are found.
+    """
+    if not ext_info or not isinstance(ext_info, dict):
+        return []
+    raw_ids = ext_info.get("connector_ids")
+    if isinstance(raw_ids, list):
+        return [cid for cid in raw_ids if isinstance(cid, str) and cid]
+    legacy = ext_info.get("connector_id")
+    if isinstance(legacy, str) and legacy:
+        return [legacy]
+    return []
+
+
+def _select_connector_tools(
+    connector_ids: List[str],
+    connector_manager: Optional["ConnectorManager"],
+) -> Tuple[List["BaseTool"], List[str]]:
+    """Resolve connector_ids to flat list of BaseTool ready for ToolPack injection.
+
+    Internally each connector is an MCPToolPack containing multiple BaseTool
+    (one per MCP server tool). We flatten here so callers can directly compose
+    them into a parent ToolPack without nesting issues -- nested ResourcePack
+    would otherwise be inserted as a single dict entry under pack.name,
+    making prefixed tool names un-lookup-able from the outer ToolPack.
+
+    Args:
+        connector_ids: IDs the user selected in the frontend.
+        connector_manager: A :class:`ConnectorManager` instance (or ``None``).
+
+    Returns:
+        A tuple of ``(tools, missing_ids)`` where *tools* is the flat list
+        of :class:`BaseTool` objects (each one a single MCP tool with its
+        server URL captured in the call closure) and *missing_ids* lists
+        IDs that could not be resolved (e.g. deleted mid-conversation).
+    """
+    from dbgpt.agent.resource.tool.base import BaseTool
+
+    tools: List["BaseTool"] = []
+    missing_ids: List[str] = []
+    if connector_manager is None or not connector_ids:
+        return tools, missing_ids
+    for cid in connector_ids:
+        pack = connector_manager.get_connector_tools(cid)
+        if pack is None:
+            missing_ids.append(cid)
+            continue
+        # Flatten: extract BaseTool instances from the pack
+        for sub_tool in pack.sub_resources:
+            if isinstance(sub_tool, BaseTool):
+                tools.append(sub_tool)
+    return tools, missing_ids
 
 
 async def _execute_skill_script_impl(
@@ -393,7 +561,11 @@ async def skill_upload(
     user_dir = skills_dir / "user"
     user_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = file.filename
+    try:
+        filename = _validate_upload_filename(file.filename)
+    except ValueError as exc:
+        return Result.failed(code="E4002", msg=str(exc))
+
     suffix = Path(filename).suffix.lower()
     stem = Path(filename).stem
 
@@ -856,30 +1028,8 @@ async def _react_agent_stream(
         )
         database_name = dialogue.ext_info.get("database_name")
 
-    def infer_phase(action: str) -> str:
-        """根据 action 名称推断所属阶段，返回自由文本描述"""
-        if not action:
-            return "执行操作"
-        action_lower = action.lower()
-        if any(kw in action_lower for kw in ["think", "plan", "reason", "analyze"]):
-            return "分析与规划"
-        elif any(kw in action_lower for kw in ["skill", "load_skill"]):
-            return "加载技能"
-        elif any(
-            kw in action_lower
-            for kw in [
-                "sql",
-                "query",
-                "database",
-                "execute",
-                "read",
-                "write",
-                "calculate",
-            ]
-        ):
-            return "执行操作"
-        else:
-            return "执行操作"
+    # Connector selection (Task C): only inject user-selected connectors.
+    connector_ids: List[str] = _parse_connector_ids(dialogue.ext_info)
 
     def build_step(title: str, detail: str, phase: str = None):
         nonlocal step
@@ -918,17 +1068,23 @@ async def _react_agent_stream(
         action: Optional[str],
         action_input: Optional[str],
         title: Optional[str] = None,
+        action_intention: Optional[str] = None,
+        action_reason: Optional[str] = None,
+        todo_meta: Optional[Dict[str, Any]] = None,
     ):
-        return _sse_event(
-            {
-                "type": "step.meta",
-                "id": step_id,
-                "thought": thought,
-                "action": action,
-                "action_input": action_input,
-                "title": title,
-            }
-        )
+        payload = {
+            "type": "step.meta",
+            "id": step_id,
+            "thought": thought,
+            "action_intention": action_intention,
+            "action_reason": action_reason,
+            "action": action,
+            "action_input": action_input,
+            "title": title,
+        }
+        if todo_meta:
+            payload["todo_meta"] = todo_meta
+        return _sse_event(payload)
 
     def chunk_text(text: str, max_len: int = 800) -> List[str]:
         if not text:
@@ -969,6 +1125,87 @@ async def _react_agent_stream(
             for chunk in chunk_text(content, max_len=800):
                 raw_chunks.append(step_chunk(step_id, "text", chunk))
         return raw_chunks
+
+    def normalize_display_text(value: Optional[str]) -> Optional[str]:
+        """Normalize a model-provided display field."""
+        if not value:
+            return None
+
+        text = re.sub(r"\s+", " ", value).strip()
+        text = re.sub(
+            r"^(phase|status|状态|action\s+intention|action\s+reason)\s*:\s*",
+            "",
+            text,
+            flags=re.I,
+        ).strip()
+        text = text.strip(" .,:;，。；：")
+        if not text:
+            return None
+        return text
+
+    def summarize_thought(
+        thought: Optional[str], action: Optional[str] = None
+    ) -> Optional[str]:
+        """Fallback compressor when the model does not provide a short status."""
+        if not thought:
+            return None
+
+        text = re.sub(r"\s+", " ", thought).strip()
+        text = re.sub(r"^(thought|phase)\s*:\s*", "", text, flags=re.I).strip()
+        if not text:
+            return None
+
+        split_markers = [
+            r"\baction\b\s*:",
+            r"\bobservation\b\s*:",
+            r"\bphase\b\s*:",
+            r"\bnow i need to\b",
+            r"\bnext,?\b",
+            r"\bthen\b",
+            r"现在需要",
+            r"下一步",
+            r"接下来",
+            r"然后",
+        ]
+        marker_pattern = "|".join(split_markers)
+        text = re.split(marker_pattern, text, maxsplit=1, flags=re.I)[0].strip(
+            " .,:;，。；："
+        )
+
+        prefixes = [
+            "the user wants me to ",
+            "i need to ",
+            "i should ",
+            "let me ",
+            "i will ",
+            "现在我需要",
+            "我需要",
+            "接下来我需要",
+            "让我",
+            "现在开始",
+            "好的，",
+            "好，",
+        ]
+        lowered = text.lower()
+        for prefix in prefixes:
+            if lowered.startswith(prefix.lower()):
+                text = text[len(prefix) :].strip(" .,:;，。；：")
+                lowered = text.lower()
+                break
+
+        action_lower = (action or "").lower()
+        if action_lower == "sql_query":
+            return "正在查询数据库信息"
+        if action_lower == "code_interpreter":
+            return "正在生成分析代码"
+        if action_lower == "html_interpreter":
+            return "正在生成并渲染 HTML 报告"
+        if action_lower == "todowrite":
+            return "正在更新任务计划"
+        if action_lower in {"execute_skill_script", "execute_skill_script_file"}:
+            return "正在执行分析脚本"
+
+        return text
 
     skills_dir = DEFAULT_SKILLS_DIR
     registry = get_registry()
@@ -1368,8 +1605,59 @@ print(json.dumps(summary, ensure_ascii=False))
 
     @tool(description="Execute a tool by name with JSON args.")
     async def execute_tool(tool_name: str, args: dict) -> str:
+        try:
+            from dbgpt.agent.resource.connector.confirmation import (
+                _PENDING_CONFIRMATIONS,
+            )
+            from dbgpt.agent.resource.connector.manager import (
+                ConnectorManager as _ConnectorManager,
+            )
+
+            _cm = CFG.SYSTEM_APP.get_component(
+                "connector_manager", _ConnectorManager, default_component=None
+            )
+            if _cm is not None:
+                _interceptor = _cm.get_confirmation_interceptor()
+                _registry = _cm.get_confirmation_registry()
+                if _interceptor.should_confirm(tool_name, args):
+                    import asyncio as _asyncio
+                    import uuid as _uuid
+
+                    _confirm_id = str(_uuid.uuid4())
+                    _registry.register(_confirm_id)
+                    _PENDING_CONFIRMATIONS[_confirm_id] = {
+                        "confirm_id": _confirm_id,
+                        "tool_name": tool_name,
+                        "args_summary": _interceptor._summarize_args(args),
+                        "message": f"即将执行写操作 {tool_name}，是否确认？",
+                        "timeout": 300,
+                    }
+                    try:
+                        _approved = await _asyncio.wait_for(
+                            _registry.wait_for(_confirm_id), timeout=300
+                        )
+                    except _asyncio.TimeoutError:
+                        _approved = False
+                    finally:
+                        _PENDING_CONFIRMATIONS.pop(_confirm_id, None)
+                    if not _approved:
+                        return json.dumps(
+                            {
+                                "chunks": [
+                                    {
+                                        "output_type": "text",
+                                        "content": "用户拒绝了此操作，工具执行已取消。",
+                                    }
+                                ]
+                            },
+                            ensure_ascii=False,
+                        )
+        except Exception:
+            pass
+
         rm = get_resource_manager(CFG.SYSTEM_APP)
         try:
+            # Primary path: lookup via ResourceManager (lazy-registered business tools)
             tool_resource = rm.build_resource_by_type(
                 ResourceType.Tool.value,
                 AgentResource(type=ResourceType.Tool.value, value=tool_name),
@@ -1380,13 +1668,76 @@ print(json.dumps(summary, ensure_ascii=False))
                 {"chunks": [{"output_type": "text", "content": str(result)}]},
                 ensure_ascii=False,
             )
-        except Exception as e:
+        except Exception as primary_exc:
+            # Fallback: if ResourceManager doesn't have the tool, try
+            # ConnectorManager active packs.  This handles the case where LLM
+            # mistakenly routes an MCP connector tool through execute_tool
+            # instead of calling it directly.
+            try:
+                from dbgpt.agent.resource.connector.manager import (
+                    ConnectorManager as _ConnectorManager,
+                )
+
+                _cm = CFG.SYSTEM_APP.get_component(
+                    "connector_manager",
+                    _ConnectorManager,
+                    default_component=None,
+                )
+                if _cm is not None:
+                    for _cid, _pack in _cm._active_packs.items():
+                        if tool_name in _pack._resources:
+                            result = await _pack.async_execute(
+                                resource_name=tool_name, **args
+                            )
+                            logger.info(
+                                "execute_tool dispatched '%s' via "
+                                "ConnectorManager fallback (connector=%s). "
+                                "Prefer direct Action call for connector "
+                                "tools.",
+                                tool_name,
+                                _cid,
+                            )
+                            return json.dumps(
+                                {
+                                    "chunks": [
+                                        {
+                                            "output_type": "text",
+                                            "content": str(result),
+                                        }
+                                    ]
+                                },
+                                ensure_ascii=False,
+                            )
+            except Exception as fallback_exc:
+                logger.warning(
+                    "execute_tool fallback to ConnectorManager failed for '%s': %s",
+                    tool_name,
+                    fallback_exc,
+                )
+                # When fallback found the tool but execution failed, surface
+                # that error to the LLM (more actionable than the
+                # ResourceManager primary error)
+                return json.dumps(
+                    {
+                        "chunks": [
+                            {
+                                "output_type": "text",
+                                "content": (
+                                    f"Tool execute failed: {fallback_exc} "
+                                    f"(primary lookup error: {primary_exc})"
+                                ),
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            # Both lookups returned None — primary path's tool-not-found error wins
             return json.dumps(
                 {
                     "chunks": [
                         {
                             "output_type": "text",
-                            "content": f"Tool execute failed: {e}",
+                            "content": f"Tool execute failed: {primary_exc}",
                         }
                     ]
                 },
@@ -2555,6 +2906,7 @@ print(json.dumps(summary, ensure_ascii=False))
         gpts_app_name="ReAct",
         language="zh",
         temperature=dialogue.temperature or 0.2,
+        enable_context_management=True,
     )
 
     # Build file context if file uploaded
@@ -2590,6 +2942,235 @@ print(json.dumps(summary, ensure_ascii=False))
 4. 按顺序执行工具调用，完成技能目标
 """
 
+    # ── TodoWrite tool ──────────────────────────────────────────────────
+    # A session-level task list that the agent maintains.  The full list is
+    # replaced on every call (same semantics as OpenCode's todowrite).
+    # The tool pushes a ``plan.update`` SSE event so the frontend can
+    # render a live task-plan card.
+    _todo_list: List[Dict[str, str]] = []
+
+    @tool(
+        description=(
+            "Create and manage a structured task list for the current session. "
+            "Use this tool to plan complex tasks (3+ steps), track progress, "
+            "and show the user what you are doing. "
+            "Pass the FULL todo list every time (not incremental). "
+            "Each todo has: content (brief description), "
+            "status (pending | in_progress | completed | cancelled), "
+            "priority (high | medium | low). "
+            "Rules: only ONE task in_progress at a time; mark tasks completed "
+            "immediately after finishing; do NOT use for single trivial tasks."
+            '\nParameter: {"todos": [{"content": "...", "status": "...", '
+            '"priority": "..."}]}'
+        )
+    )
+    def todowrite(todos: str) -> str:
+        """Update the session todo list (full replacement)."""
+        import json as _json
+
+        parsed: List[Dict[str, str]] = []
+        try:
+            raw = _json.loads(todos) if isinstance(todos, str) else todos
+            items = raw if isinstance(raw, list) else raw.get("todos", raw)
+            if isinstance(items, list):
+                for item in items:
+                    parsed.append(
+                        {
+                            "content": str(item.get("content", "")),
+                            "status": str(item.get("status", "pending")),
+                            "priority": str(item.get("priority", "medium")),
+                        }
+                    )
+        except Exception:
+            return _json.dumps(
+                {
+                    "chunks": [
+                        {
+                            "output_type": "text",
+                            "content": "Error: invalid todos JSON",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+
+        _todo_list.clear()
+        _todo_list.extend(parsed)
+
+        total = len(parsed)
+        done = sum(1 for t in parsed if t["status"] == "completed")
+        return _json.dumps(
+            {
+                "chunks": [
+                    {
+                        "output_type": "text",
+                        "content": f"Todo list updated: {done}/{total} completed",
+                    }
+                ],
+                # Attach the todo list so SSE handler can forward it
+                "__todos__": parsed,
+            },
+            ensure_ascii=False,
+        )
+
+    _todo_action_history: Dict[int, List[str]] = {}
+
+    def _active_todo_index() -> Optional[int]:
+        for idx, item in enumerate(_todo_list):
+            if item.get("status") == "in_progress":
+                return idx
+        return None
+
+    def _normalize_text(value: Optional[str]) -> str:
+        return (value or "").strip().lower()
+
+    def _is_report_like(text: str) -> bool:
+        keywords = [
+            "report",
+            "html",
+            "dashboard",
+            "visual",
+            "visualization",
+            "图表",
+            "报告",
+            "报表",
+            "可视化",
+            "渲染",
+            "展示",
+        ]
+        return any(keyword in text for keyword in keywords)
+
+    def should_advance_todo(
+        action_name: Optional[str],
+        thought: Optional[str] = None,
+        observation_text: Optional[str] = None,
+    ) -> bool:
+        """Heuristically decide whether the current todo is actually complete."""
+        if not _todo_list:
+            return False
+
+        active_idx = _active_todo_index()
+        if active_idx is None:
+            return False
+
+        action_lower = _normalize_text(action_name)
+        thought_lower = _normalize_text(thought)
+        observation_lower = _normalize_text(observation_text)
+        current_todo = _normalize_text(_todo_list[active_idx].get("content"))
+        next_todo = (
+            _normalize_text(_todo_list[active_idx + 1].get("content"))
+            if active_idx + 1 < len(_todo_list)
+            else ""
+        )
+
+        history = _todo_action_history.setdefault(active_idx, [])
+        if action_lower:
+            history.append(action_lower)
+
+        transition_markers = [
+            "next step",
+            "now i need",
+            "now i should",
+            "now let me",
+            "现在需要",
+            "下一步",
+            "接下来",
+            "然后",
+            "接着",
+            "接下来我将",
+        ]
+        if next_todo and any(marker in thought_lower for marker in transition_markers):
+            if any(token and token in thought_lower for token in next_todo.split()):
+                return True
+
+        if action_lower == "html_interpreter":
+            return True
+
+        if action_lower in {
+            "load_skill",
+            "execute_skill_script",
+            "execute_skill_script_file",
+        }:
+            if next_todo and next_todo in thought_lower:
+                return True
+            if _is_report_like(next_todo) and _is_report_like(thought_lower):
+                return True
+
+        if action_lower == "sql_query":
+            sql_calls = sum(1 for item in history if item == "sql_query")
+            if sql_calls < 3:
+                return False
+
+            if next_todo and any(
+                token and token in thought_lower for token in next_todo.split()
+            ):
+                return True
+
+            if _is_report_like(next_todo) and (
+                "summary" in thought_lower
+                or "summarize" in thought_lower
+                or "整理" in thought_lower
+                or "汇总" in thought_lower
+                or "报告" in thought_lower
+            ):
+                return True
+
+            if current_todo and not _is_report_like(current_todo):
+                completion_markers = [
+                    "enough information",
+                    "collected enough",
+                    "gathered enough",
+                    "completed metadata",
+                    "obtained the overview",
+                    "获取了足够",
+                    "已经获取了足够",
+                    "已完成",
+                    "已获取",
+                    "整理一下",
+                ]
+                if any(marker in thought_lower for marker in completion_markers):
+                    return True
+
+            return False
+
+        if action_lower in {"code_interpreter", "execute_tool", "shell_interpreter"}:
+            if _is_report_like(current_todo):
+                return False
+            if next_todo and any(
+                token and token in thought_lower for token in next_todo.split()
+            ):
+                return True
+            if observation_lower and _is_report_like(observation_lower):
+                return True
+
+        return False
+
+    def advance_todo_list() -> Optional[List[Dict[str, str]]]:
+        """Advance one todo when the current task appears substantively complete."""
+        if not _todo_list:
+            return None
+
+        changed = False
+        active_idx = _active_todo_index()
+
+        if active_idx is not None:
+            _todo_list[active_idx]["status"] = "completed"
+            changed = True
+            _todo_action_history.pop(active_idx, None)
+            for next_item in _todo_list[active_idx + 1 :]:
+                if next_item.get("status") == "pending":
+                    next_item["status"] = "in_progress"
+                    _todo_action_history.pop(active_idx + 1, None)
+                    break
+        else:
+            for item in _todo_list:
+                if item.get("status") == "pending":
+                    item["status"] = "in_progress"
+                    changed = True
+                    break
+
+        return list(_todo_list) if changed else None
+
     # Build a hint listing all images currently available in
     # STATIC_MESSAGE_IMG_PATH so the LLM can reference them correctly in
     # html_interpreter.
@@ -2602,6 +3183,35 @@ print(json.dumps(summary, ensure_ascii=False))
     is_skill_mode = pre_matched_skill is not None
     _skill_name = pre_matched_skill.metadata.name if pre_matched_skill else "skill"
 
+    # Inject connector tools — only the ones the user explicitly selected.
+    connector_tool_extras: List[Any] = []
+    try:
+        from dbgpt.agent.resource.connector.manager import (
+            ConnectorManager as _ConnectorManager,
+        )
+
+        _connector_manager = CFG.SYSTEM_APP.get_component(
+            "connector_manager", _ConnectorManager, default_component=None
+        )
+        if _connector_manager is not None and connector_ids:
+            connector_tool_extras, _missing = _select_connector_tools(
+                connector_ids, _connector_manager
+            )
+            for _mid in _missing:
+                logger.warning(
+                    "_react_agent_stream: connector_id %s not active, skipping",
+                    _mid,
+                )
+            if connector_tool_extras:
+                logger.info(
+                    "_react_agent_stream: injected %d connector tool pack(s) "
+                    "(selected: %d)",
+                    len(connector_tool_extras),
+                    len(connector_ids),
+                )
+    except Exception:
+        pass  # graceful degradation — connector tools are optional
+
     if is_skill_mode:
         # Simplified prompt for skill mode - only skill-related tools +
         # html_interpreter
@@ -2611,7 +3221,8 @@ Please always response in the same language as the user's input language.
 
 ## Autonomous Decision Principles
 1. Strictly follow the instructions of the loaded skill.
-2. For each step, output Thought -> Phase -> Action -> Action Input.
+2. For each step, output Thought -> Action Intention -> Action Reason -> Action
+   -> Action Input.
 3. Wait for the system to return Observation before deciding on the next step.
 4. **[Mandatory Rule] If the task requires generating an analysis report, you MUST
 call `html_interpreter` for HTML rendering.** By default, generate complete HTML
@@ -2690,22 +3301,49 @@ to this tool.
 If template_path returns "Template not found", immediately switch to the default
 `html` parameter usage.
    {available_images_hint}
-6. **terminate**: Return the final answer when the task is completed. Action Input
+6. **sql_query**: Execute a read-only SQL query against the selected database.
+Parameters: {{"sql": "SELECT statement"}}
+7. **todowrite**: Create and manage a structured task list. Use for complex tasks
+(3+ steps) to plan and track progress. Pass the FULL list every time. Each item:
+{{"content": "description", "status": "pending|in_progress|completed|cancelled",
+"priority": "high|medium|low"}}. Only ONE task in_progress at a time.
+IMPORTANT: You MUST call todowrite again after EACH task completes to update status.
+The user sees progress in real time — never skip an update.
+Parameters: {{"todos": [{{...}}]}}
+8. **terminate**: Return the final answer when the task is completed. Action Input
 must be {{"result": "your final answer content"}}.
+
+## Task Management
+For complex tasks that require 3 or more steps, use the `todowrite` tool to create
+a structured task plan BEFORE starting work. This helps users track your progress.
+- Call `todowrite` with the FULL todo list (all items) each time you update.
+- Mark exactly ONE task as `in_progress` at a time.
+- Mark tasks `completed` immediately after finishing each one.
+- Do NOT use todowrite for simple single-step tasks.
+
+CRITICAL: You MUST call `todowrite` to update the task list at EVERY transition:
+1. BEFORE starting a task: mark it `in_progress` (call todowrite)
+2. AFTER finishing a task: mark it `completed` AND mark the next one
+   `in_progress` (call todowrite)
+3. Never skip updating — the user sees this progress in real time.
+Example flow for 3 tasks:
+- Create plan: [task1=in_progress, task2=pending, task3=pending] → call todowrite
+- Finish task1: [task1=completed, task2=in_progress, task3=pending] → call todowrite
+- Finish task2: [task1=completed, task2=completed, task3=in_progress] → call todowrite
+- Finish task3: [task1=completed, task2=completed, task3=completed] → call todowrite
 
 {file_context}
 {knowledge_context}
 {database_context}
-## Phase (Must output for each step)
-Phase is a short text description expressing the intention or stage of the current
-step. Example: "Load sales analysis skill", "Execute data extraction script",
-"Render analysis report".
 ## ReAct Output Format
 Must output for each interaction round:
 Thought: Analyze current task status and think about what to do next
-Phase: Use a short text to describe the intention of the current step (e.g.,
-"Load sales analysis skill", "Execute data extraction script",
-"Render analysis report")
+Action Intention: What this step will do, plain text, MUST be concise and fit in
+<= 18 Chinese chars or <= 8 English words. If too long, rewrite shorter.
+Do not use ellipsis.
+Action Reason: Why this action is needed now, plain text, MUST be concise and fit in
+<= 30 Chinese chars or <= 12 English words. If too long, rewrite shorter.
+Do not use ellipsis.
 Action: The selected tool name (must be one of the tools listed above)
 Action Input: The JSON format of tool parameters
 """.strip()
@@ -2718,9 +3356,11 @@ Action Input: The JSON format of tool parameters
                 shell_interpreter,
                 html_interpreter,
                 sql_query,
+                todowrite,
                 Terminate(),
             ]
             + business_tools
+            + connector_tool_extras
         )
     else:
         # Full prompt with all tools when no skill is pre-selected
@@ -2733,7 +3373,8 @@ Please always response in the same language as the user's input language.
 1. Carefully analyze the user's task requirements.
 2. Autonomously select required tools based on requirements (do not follow a fixed
 order, select as needed).
-3. For each step, output Thought -> Phase -> Action -> Action Input.
+3. For each step, output Thought -> Action Intention -> Action Reason -> Action
+   -> Action Input.
 4. Wait for the system to return Observation before deciding on the next step.
 5. When the task is completed, call the terminate tool to return the final result.
 The Action Input format must be {{"result": "final answer"}}.
@@ -2743,6 +3384,25 @@ HTML report, or interactive report, the final presentation step must call
 `html_interpreter` to render it. It is forbidden to output HTML using only
 `code_interpreter` and then directly terminate. Correct process: code_interpreter
 writes to .html file -> html_interpreter(file_path=...) renders -> terminate.**
+
+## Task Management
+For complex tasks that require 3 or more steps, use the `todowrite` tool to create
+a structured task plan BEFORE starting work. This helps users track your progress.
+- Call `todowrite` with the FULL todo list (all items) each time you update.
+- Mark exactly ONE task as `in_progress` at a time.
+- Mark tasks `completed` immediately after finishing each one.
+- Do NOT use todowrite for simple single-step tasks.
+
+CRITICAL: You MUST call `todowrite` to update the task list at EVERY transition:
+1. BEFORE starting a task: mark it `in_progress` (call todowrite)
+2. AFTER finishing a task: mark it `completed` AND mark the next one
+   `in_progress` (call todowrite)
+3. Never skip updating — the user sees this progress in real time.
+Example flow for 3 tasks:
+- Create plan: [task1=in_progress, task2=pending, task3=pending] → call todowrite
+- Finish task1: [task1=completed, task2=in_progress, task3=pending] → call todowrite
+- Finish task2: [task1=completed, task2=completed, task3=in_progress] → call todowrite
+- Finish task3: [task1=completed, task2=completed, task3=completed] → call todowrite
 
 ## Available Skills List (Pre-loaded)
 {skills_context}
@@ -2806,20 +3466,28 @@ to display reports on the right panel). Default usage:
 {{"html": "<html>complete HTML code</html>", "title": "title"}}. Template mode:
 {{"template_path": "skill/templates/xxx.html", "data": {{...}}, "title": "title"}}.
 File mode: {{"file_path": "/path/to/report.html"}}
-14. **terminate**: Finish the task. Parameters: {{"result": "final answer"}}
+14. **todowrite**: Create and manage a structured task list. Use for complex tasks
+(3+ steps) to plan and track progress. Pass the FULL list every time. Each item:
+{{"content": "description", "status": "pending|in_progress|completed|cancelled",
+"priority": "high|medium|low"}}. Only ONE task in_progress at a time.
+IMPORTANT: You MUST call todowrite again after EACH task completes to update status.
+The user sees progress in real time — never skip an update.
+Parameters: {{"todos": [{{...}}]}}
+15. **terminate**: Finish the task. Parameters: {{"result": "final answer"}}
 
 {file_context}
 {knowledge_context}
 {database_context}
 
-## Phase (Must output for each step)
-Phase is a short text description expressing the intention or stage of the current
-step. Example: "Select skill", "Analyze data", "Render report".
-
 ## ReAct Output Format
 Must output for each interaction round:
 Thought: Analyze current task status and think about what to do next
-Phase: Use a short text to describe the intention of the current step
+Action Intention: What this step will do, plain text, MUST be concise and fit in
+<= 18 Chinese chars or <= 8 English words. If too long, rewrite shorter.
+Do not use ellipsis.
+Action Reason: Why this action is needed now, plain text, MUST be concise and fit in
+<= 30 Chinese chars or <= 12 English words. If too long, rewrite shorter.
+Do not use ellipsis.
 Action: The selected tool name
 Action Input: The JSON format of tool parameters
 """.strip()
@@ -2836,9 +3504,11 @@ Action Input: The JSON format of tool parameters
                 shell_interpreter,
                 html_interpreter,
                 sql_query,
+                todowrite,
                 Terminate(),
             ]
             + business_tools
+            + connector_tool_extras
         )
 
     # Debug: print all registered tools
@@ -2850,6 +3520,87 @@ Action Input: The JSON format of tool parameters
     all_resources = [tool_pack]
     if knowledge_resources:
         all_resources.extend(knowledge_resources)
+
+    # --- Connector system prompt injection (T11) ---
+    try:
+        from dbgpt.agent.resource.connector.manager import (
+            ConnectorManager as _ConnectorManager,
+        )
+
+        _cm = CFG.SYSTEM_APP.get_component(
+            "connector_manager", _ConnectorManager, default_component=None
+        )
+        if _cm is not None and connector_ids:
+            _active = _cm.list_active()
+            # Only describe connectors the user explicitly selected.
+            # Iterate connector_ids (not _active) so prompt order matches
+            # user selection order and stays consistent with _select_connector_tools.
+            _active_map = {c["connector_id"]: c for c in _active if isinstance(c, dict)}
+            _selected = [
+                _active_map[cid] for cid in connector_ids if cid in _active_map
+            ]
+            if _selected:
+                _connector_lines = []
+                for _c in _selected:
+                    _tool_lines = []
+                    for t in _c.get("tools", []):
+                        _name = t.get("name", "unknown")
+                        _desc = t.get("description", "") or "(no description)"
+                        _args_schema = t.get("args", {}) or {}
+                        # Render args schema as concise Parameters description
+                        if _args_schema:
+                            _param_parts = []
+                            for _arg_name, _arg_meta in _args_schema.items():
+                                if isinstance(_arg_meta, dict):
+                                    _arg_type = _arg_meta.get("type", "any")
+                                    _req = (
+                                        "required"
+                                        if _arg_meta.get("required")
+                                        else "optional"
+                                    )
+                                    _arg_desc = _arg_meta.get("description", "")
+                                    if _arg_desc:
+                                        _trimmed_desc = (
+                                            _arg_desc[:120] + "..."
+                                            if len(_arg_desc) > 120
+                                            else _arg_desc
+                                        )
+                                        _param_parts.append(
+                                            f'"{_arg_name}": <{_arg_type}, {_req}, '
+                                            f"{_trimmed_desc}>"
+                                        )
+                                    else:
+                                        _param_parts.append(
+                                            f'"{_arg_name}": <{_arg_type}, {_req}>'
+                                        )
+                                else:
+                                    _param_parts.append(f'"{_arg_name}": <any>')
+                            _params_str = "{" + ", ".join(_param_parts) + "}"
+                        else:
+                            _params_str = "{}"
+                        _tool_lines.append(
+                            f"  - **{_name}**: {_desc}\n    Parameters: {_params_str}"
+                        )
+                    _connector_lines.append(
+                        f"### {_c.get('name', 'unknown')} "
+                        f"({_c.get('connector_type', 'unknown')})\n"
+                        f"{_c.get('description', '') or '(no description)'}\n\n"
+                        f"Tools (call directly with `Action: <tool_name>`):\n"
+                        + "\n".join(_tool_lines)
+                        + "\n\nNote: Write operations require user confirmation."
+                    )
+                _connector_prompt = (
+                    "\n\n## Available MCP Connector Tools\n"
+                    "You have access to the following external MCP connectors. "
+                    "All listed tools are pre-registered — invoke them directly "
+                    "with `Action: <tool_name>`, NOT through `execute_tool`.\n"
+                    + "\n\n".join(_connector_lines)
+                )
+                workflow_prompt += _connector_prompt
+    except Exception:
+        pass  # graceful degradation
+    # --- End connector system prompt injection ---
+
     # Convert workflow_prompt to PromptTemplate so it is used as system prompt
     # Use jinja2 format to avoid issues with JSON braces { } in the prompt
     workflow_prompt_template = PromptTemplate(
@@ -2873,6 +3624,19 @@ Action Input: The JSON format of tool parameters
     received = AgentMessage(content=user_input)
     stream_queue: asyncio.Queue = asyncio.Queue()
 
+    # Wire up context-management status events into the SSE stream.
+    async def _context_status_callback(status: Dict[str, Any]) -> None:
+        await stream_queue.put({"type": "context.status", **status})
+
+    agent.init_context_management(
+        config=await _load_context_budget_config(
+            llm_client=llm_client,
+            model_name=dialogue.model_name,
+        ),
+        model_name=dialogue.model_name,
+        on_status_event=_context_status_callback,
+    )
+
     async def stream_callback(event_type: str, payload: Dict[str, Any]) -> None:
         await stream_queue.put({"type": event_type, **payload})
 
@@ -2888,6 +3652,8 @@ Action Input: The JSON format of tool parameters
     pending_thoughts: Dict[
         int, List[str]
     ] = {}  # Buffer thinking content for delayed step creation
+    pending_action_intentions: Dict[int, str] = {}
+    pending_action_reasons: Dict[int, str] = {}
     # --- History persistence: collect step data during streaming ---
     history_steps: List[Dict[str, Any]] = []
     current_history_step: Optional[Dict[str, Any]] = None
@@ -2942,19 +3708,26 @@ Action Input: The JSON format of tool parameters
             continue
 
         event_type = event.get("type")
-        if event_type == "thinking":
+        if event_type == "context.status":
+            # Forward context-management status to frontend as-is.
+            yield _sse_event(event)
+        elif event_type == "thinking":
             # Parse thinking content but don't create step yet
             # Step will be created when 'act' event arrives with confirmed
             # action
             round_num = int(event.get("round") or (len(round_step_map) + 1))
             llm_reply = event.get("llm_reply") or ""
             thought = None
+            action_intention = None
+            action_reason = None
             action = None
             action_input = None
             try:
                 steps = parser.parse(llm_reply)
                 if steps:
                     thought = steps[0].thought
+                    action_intention = steps[0].action_intention
+                    action_reason = steps[0].action_reason
                     action = steps[0].action
                     action_input = steps[0].action_input
             except Exception:
@@ -2965,6 +3738,12 @@ Action Input: The JSON format of tool parameters
                 pending_thoughts[round_num] = []
             if thought:
                 pending_thoughts[round_num].append(thought)
+            intention_text = normalize_display_text(action_intention)
+            if intention_text:
+                pending_action_intentions[round_num] = intention_text
+            reason_text = normalize_display_text(action_reason)
+            if reason_text:
+                pending_action_reasons[round_num] = reason_text
             # Don't emit anything yet - wait for 'act' event to create step
 
         elif event_type == "thinking_chunk":
@@ -2995,14 +3774,6 @@ Action Input: The JSON format of tool parameters
                         )
                         round_step_map[round_num] = pending_step_id
                         yield pending_step_event
-                    target_id = round_step_map[round_num]
-                    yield _sse_event(
-                        {
-                            "type": "step.thought",
-                            "id": target_id,
-                            "content": clean_chunk,
-                        }
-                    )
 
         elif event_type == "act":
             # Create step ONLY when action is confirmed
@@ -3032,6 +3803,121 @@ Action Input: The JSON format of tool parameters
             )
             if is_terminate:
                 pending_thoughts.pop(round_num, [])
+                pending_action_intentions.pop(round_num, None)
+                pending_action_reasons.pop(round_num, None)
+                # ── Auto-complete all remaining todos on terminate ──
+                if _todo_list:
+                    for t in _todo_list:
+                        if t["status"] in ("pending", "in_progress"):
+                            t["status"] = "completed"
+                    yield _sse_event({"type": "plan.update", "tasks": list(_todo_list)})
+                continue
+
+            # ── TodoWrite: emit plan.update SSE and show step card ──
+            if action and action.lower() == "todowrite":
+                pending_thoughts.pop(round_num, [])
+                pending_action_intentions.pop(round_num, None)
+                pending_action_reasons.pop(round_num, None)
+                # Extract todos from observation JSON
+                obs_text = action_output.get("observations") or action_output.get(
+                    "content"
+                )
+                todos_payload: List[Dict[str, str]] = []
+                if obs_text:
+                    try:
+                        obs_json = (
+                            json.loads(obs_text)
+                            if isinstance(obs_text, str)
+                            else obs_text
+                        )
+                        if isinstance(obs_json, dict):
+                            todos_payload = obs_json.get("__todos__", [])
+                    except Exception:
+                        pass
+                # Fallback: read from the closure variable
+                if not todos_payload and _todo_list:
+                    todos_payload = list(_todo_list)
+
+                _td_total = len(todos_payload)
+                _td_done = sum(
+                    1 for t in todos_payload if t.get("status") == "completed"
+                )
+                if _td_done == 0:
+                    todo_state = "init"
+                elif _td_done == _td_total and _td_total > 0:
+                    todo_state = "done"
+                else:
+                    todo_state = "progress"
+
+                todo_meta = {
+                    "state": todo_state,
+                    "done": _td_done,
+                    "total": _td_total,
+                }
+                _todo_step_title = (
+                    f"TODO::{todo_state}:{_td_done}/{_td_total}"
+                    if _td_total > 0
+                    else f"TODO::{todo_state}"
+                )
+
+                # Emit or update the step card for this round
+                # NOTE: Do NOT set phase — let it fall into the default
+                # "Execution Steps" group so todowrite cards appear inline
+                # alongside other action steps in chronological order.
+                if round_num in round_step_map:
+                    todo_step_id = round_step_map[round_num]
+                    yield _sse_event(
+                        {
+                            "type": "step.start",
+                            "step": step,
+                            "id": todo_step_id,
+                            "title": _todo_step_title,
+                            "detail": "todowrite",
+                            "todo_meta": todo_meta,
+                        }
+                    )
+                else:
+                    todo_step_id, todo_step_event = build_step(
+                        _todo_step_title,
+                        "todowrite",
+                    )
+                    round_step_map[round_num] = todo_step_id
+                    yield _sse_event(
+                        {
+                            "type": "step.start",
+                            "step": step,
+                            "id": todo_step_id,
+                            "title": _todo_step_title,
+                            "detail": "todowrite",
+                            "todo_meta": todo_meta,
+                        }
+                    )
+
+                yield _sse_event({"type": "plan.update", "tasks": todos_payload})
+                yield step_meta(
+                    round_step_map[round_num],
+                    None,
+                    action,
+                    None,
+                    _todo_step_title,
+                    todo_meta=todo_meta,
+                )
+                history_steps.append(
+                    {
+                        "id": round_step_map[round_num],
+                        "title": _todo_step_title,
+                        "detail": "todowrite",
+                        "thought": None,
+                        "action_intention": None,
+                        "action_reason": None,
+                        "action": action,
+                        "action_input": None,
+                        "outputs": [],
+                        "status": "done",
+                        "todo_meta": todo_meta,
+                    }
+                )
+                yield step_done(round_step_map[round_num])
                 continue
 
             # Collect buffered thoughts for history persistence
@@ -3047,13 +3933,23 @@ Action Input: The JSON format of tool parameters
                     full_thought = full_thought[len("Thought:") :].strip()
                 if full_thought:
                     thought_text = full_thought
+            action_intention = normalize_display_text(
+                action_output.get("action_intention")
+                or pending_action_intentions.pop(round_num, None)
+                or action_output.get("phase")
+            )
+            action_reason = normalize_display_text(
+                action_output.get("action_reason")
+                or pending_action_reasons.pop(round_num, None)
+            )
+            display_thought = action_intention or summarize_thought(
+                thought_text or thoughts, action
+            )
 
             # Use the actual action name as the step title (Manus-style UI)
             action_title = action or f"ReAct Round {round_num}"
-            # Infer phase from action name
-            inferred_phase = action_output.get("phase") or infer_phase(action)
             if round_num in round_step_map:
-                # Step already exists (from thinking) - update title/phase with same id
+                # Step already exists (from thinking) - update title with same id
                 react_step_id = round_step_map[round_num]
                 updated_event = _sse_event(
                     {
@@ -3062,7 +3958,6 @@ Action Input: The JSON format of tool parameters
                         "id": react_step_id,
                         "title": action_title,
                         "detail": "Thought/Action/Observation",
-                        "phase": inferred_phase,
                     }
                 )
                 yield updated_event
@@ -3070,7 +3965,6 @@ Action Input: The JSON format of tool parameters
                 react_step_id, react_step_event = build_step(
                     action_title,
                     "Thought/Action/Observation",
-                    phase=inferred_phase,
                 )
                 round_step_map[round_num] = react_step_id
                 yield react_step_event
@@ -3087,8 +3981,9 @@ Action Input: The JSON format of tool parameters
                 "id": react_step_id,
                 "title": action_title,
                 "detail": "Thought/Action/Observation",
-                "phase": inferred_phase,
-                "thought": thought_text,
+                "thought": display_thought,
+                "action_intention": action_intention,
+                "action_reason": action_reason,
                 "action": action,
                 "action_input": action_input_str,
                 "outputs": [],
@@ -3114,10 +4009,12 @@ Action Input: The JSON format of tool parameters
                 )
                 yield step_meta(
                     react_step_id,
-                    thoughts,
+                    display_thought,
                     action,
                     step_action_input,
                     action_title,
+                    action_intention=action_intention,
+                    action_reason=action_reason,
                 )
 
             # Emit observation (action execution result)
@@ -3162,7 +4059,17 @@ Action Input: The JSON format of tool parameters
             # Mark step as done and track as last completed
             status = "done" if action_output.get("is_exe_success", True) else "failed"
             yield step_done(react_step_id, status)
-
+            if (
+                status == "done"
+                and action
+                and action.lower() != "todowrite"
+                and should_advance_todo(
+                    action, thought_text or thoughts, observation_text
+                )
+            ):
+                updated_todos = advance_todo_list()
+                if updated_todos:
+                    yield _sse_event({"type": "plan.update", "tasks": updated_todos})
             # --- History: finalize step ---
             if current_history_step is not None:
                 current_history_step["status"] = status
@@ -3173,13 +4080,13 @@ Action Input: The JSON format of tool parameters
         reply = await agent_task
     except Exception as e:
         err_msg = f"React agent failed: {e}"
-        # Persist error reply with structured history payload
         error_payload = json.dumps(
             {
                 "version": 1,
                 "type": "react-agent",
                 "final_content": err_msg,
                 "steps": history_steps,
+                "task_plan": list(_todo_list),
                 "generated_images": react_state.get("generated_images", []),
             },
             ensure_ascii=False,
@@ -3247,6 +4154,7 @@ Action Input: The JSON format of tool parameters
             "type": "react-agent",
             "final_content": final_content,
             "steps": history_steps,
+            "task_plan": list(_todo_list),
             "generated_images": react_state.get("generated_images", []),
         },
         ensure_ascii=False,
