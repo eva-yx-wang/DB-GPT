@@ -74,7 +74,10 @@ datasource_duckdb = [
 storage_milvus = ["pymilvus"]
 storage_weaviate = ["weaviate-client"]
 storage_chromadb = [
-    "onnxruntime>=1.14.1,<=1.18.1",
+    # 限制版本以支持 glibc 2.17 (manylinux_2_17) 系统
+    # onnxruntime 1.17.0+ 需要 manylinux_2_27+ (glibc 2.27+)
+    # 因此使用 1.16.x 或更早版本以兼容 manylinux_2_17 系统
+    "onnxruntime>=1.14.1,<1.17.0",
     "chromadb>=0.4.22"
     ]
 storage_elasticsearch = ["elasticsearch"]
@@ -91,7 +94,9 @@ file_s3 = [
 
 [tool.uv]
 managed = true
-dev-dependencies = [
+
+[dependency-groups]
+dev = [
     "pytest>=8.3.4",
 ]
 

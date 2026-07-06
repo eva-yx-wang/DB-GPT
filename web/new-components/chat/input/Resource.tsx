@@ -9,7 +9,7 @@ import type { UploadFile } from 'antd';
 import { Select, Tooltip, Upload } from 'antd';
 import classNames from 'classnames';
 import { useSearchParams } from 'next/navigation';
-import React, { memo, useCallback, useContext, useMemo, useState } from 'react';
+import React, { memo, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 const Resource: React.FC<{
@@ -68,14 +68,15 @@ const Resource: React.FC<{
   const dbOpts = useMemo(
     () =>
       dbs.map?.((db: IDB) => {
+        const mapper = dbMapper[db.type as keyof typeof dbMapper];
         return {
           label: (
             <>
               <DBIcon
                 width={24}
                 height={24}
-                src={dbMapper[db.type].icon}
-                label={dbMapper[db.type].label}
+                src={mapper?.icon || '/icons/mysql.png'}
+                label={mapper?.label || db.type}
                 className='w-[1.5em] h-[1.5em] mr-1 inline-block mt-[-4px]'
               />
               {db.param}
@@ -86,6 +87,16 @@ const Resource: React.FC<{
       }),
     [dbs],
   );
+
+  useEffect(() => {
+    if (
+      !resourceValue &&
+      dbOpts?.[0]?.value &&
+      ['database', 'knowledge', 'plugin', 'awel_flow'].includes(resource?.value || '')
+    ) {
+      setResourceValue(dbOpts[0].value);
+    }
+  }, [dbOpts, resource?.value, resourceValue, setResourceValue]);
 
   // 上传
   const onUpload = useCallback(async () => {
@@ -175,9 +186,6 @@ const Resource: React.FC<{
     case 'knowledge':
     case 'plugin':
     case 'awel_flow':
-      if (!resourceValue) {
-        setResourceValue(dbOpts?.[0]?.value);
-      }
       return (
         <Select
           value={resourceValue}

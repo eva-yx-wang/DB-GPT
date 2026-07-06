@@ -1,0 +1,57 @@
+[system]
+language = "${env:DBGPT_LANG:-zh}"
+log_level = "INFO"
+api_keys = []
+encrypt_key = "your_secret_key"
+
+[service.web]
+host = "0.0.0.0"
+port = 5670
+
+[service.web.agent_context]
+max_context_tokens = 0
+reserved_tokens = 4096
+warning_threshold = 0.70
+error_threshold = 0.90
+critical_threshold = 0.95
+min_keep_recent_rounds = 3
+max_observation_age_rounds = 5
+truncated_observation_max_chars = 200
+min_keep_tokens = 10000
+max_compact_failures = 3
+
+# 生产环境：MySQL 元数据库（对应 docker-compose.yml 中 db 服务）
+[service.web.database]
+type = "mysql"
+host = "${env:MYSQL_HOST:-127.0.0.1}"
+port = "${env:MYSQL_PORT:-3306}"
+database = "${env:MYSQL_DATABASE:-dbgpt}"
+user = "${env:MYSQL_USER:-root}"
+password = "${env:MYSQL_PASSWORD:-aa123456}"
+
+[rag]
+chunk_size = 1000
+chunk_overlap = 0
+similarity_top_k = 5
+similarity_score_threshold = 0.0
+max_chunks_once_load = 10
+max_threads = 1
+rerank_top_k = 3
+
+[rag.storage]
+[rag.storage.vector]
+type = "chroma"
+persist_path = "pilot/data"
+
+[models]
+[[models.llms]]
+name = "qwen3-max"
+provider = "${env:LLM_MODEL_PROVIDER:-proxy/tongyi}"
+api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key = "${env:DASHSCOPE_API_KEY}"
+
+[[models.embeddings]]
+name = "text-embedding-v4"
+provider = "${env:EMBEDDING_MODEL_PROVIDER:-proxy/tongyi}"
+api_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
+api_key = "${env:DASHSCOPE_API_KEY}"

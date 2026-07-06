@@ -31,6 +31,7 @@ from dbgpt_app.openapi.api_v1.api_v1 import (
     stream_generator,
 )
 from dbgpt_app.scene import BaseChat, ChatParam, ChatScene
+from dbgpt_app.util.conv_logger import add_conv_log_handler, remove_conv_log_handler
 from dbgpt_client.schema import ChatCompletionRequestBody, ChatMode
 from dbgpt_serve.agent.agents.controller import multi_agents
 from dbgpt_serve.flow.api.endpoints import get_service
@@ -148,6 +149,7 @@ async def chat_completions(
                     request.model,
                     text_output=False,
                     openai_format=True,
+                    conv_uid=request.conv_uid,
                 ),
                 headers=headers,
                 media_type="text/event-stream",
@@ -219,17 +221,24 @@ async def no_stream_wrapper(
         request (OpenAPIChatCompletionRequest): request
         chat (BaseChat): chat
     """
-    with root_tracer.start_span("no_stream_generator"):
-        response = await chat.nostream_call()
-        msg = response.replace("\ufffd", "").replace("&quot;", '"')
-        choice_data = ChatCompletionResponseChoice(
-            index=0,
-            message=ChatMessage(role="assistant", content=msg),
-        )
-        usage = UsageInfo()
-        return ChatCompletionResponse(
-            id=request.conv_uid, choices=[choice_data], model=request.model, usage=usage
-        )
+    conv_handler = add_conv_log_handler(request.conv_uid)
+    try:
+        with root_tracer.start_span("no_stream_generator"):
+            response = await chat.nostream_call()
+            msg = response.replace("\ufffd", "").replace("&quot;", '"')
+            choice_data = ChatCompletionResponseChoice(
+                index=0,
+                message=ChatMessage(role="assistant", content=msg),
+            )
+            usage = UsageInfo()
+            return ChatCompletionResponse(
+                id=request.conv_uid,
+                choices=[choice_data],
+                model=request.model,
+                usage=usage,
+            )
+    finally:
+        remove_conv_log_handler(conv_handler)
 
 
 async def chat_app_stream_wrapper(request: ChatCompletionRequestBody = None):
@@ -238,63 +247,78 @@ async def chat_app_stream_wrapper(request: ChatCompletionRequestBody = None):
         request (OpenAPIChatCompletionRequest): request
         token (APIToken): token
     """
-    async for output in multi_agents.app_agent_chat(
-        conv_uid=request.conv_uid,
-        gpts_name=request.chat_param,
-        user_query=request.single_prompt(),
-        user_code=request.user_name,
-        sys_code=request.sys_code,
-    ):
-        match = re.search(r"data:\s*({.*})", output)
-        if match:
-            json_str = match.group(1)
-            vis = json.loads(json_str)
-            vis_content = vis.get("vis", None)
-            if vis_content != "[DONE]":
-                choice_data = ChatCompletionResponseStreamChoice(
-                    index=0,
-                    delta=DeltaMessage(role="assistant", content=vis.get("vis", None)),
-                )
-                chunk = ChatCompletionStreamResponse(
-                    id=request.conv_uid,
-                    choices=[choice_data],
-                    model=request.model,
-                    created=int(time.time()),
-                )
-                json_content = model_to_json(
-                    chunk, exclude_unset=True, ensure_ascii=False
-                )
-                content = f"data: {json_content}\n\n"
-                yield content
-    yield "data: [DONE]\n\n"
+    conv_handler = add_conv_log_handler(request.conv_uid)
+    try:
+        async for output in multi_agents.app_agent_chat(
+            conv_uid=request.conv_uid,
+            gpts_name=request.chat_param,
+            user_query=request.single_prompt(),
+            user_code=request.user_name,
+            sys_code=request.sys_code,
+        ):
+            match = re.search(r"data:\s*({.*})", output)
+            if match:
+                json_str = match.group(1)
+                vis = json.loads(json_str)
+                vis_content = vis.get("vis", None)
+                if vis_content != "[DONE]":
+                    choice_data = ChatCompletionResponseStreamChoice(
+                        index=0,
+                        delta=DeltaMessage(
+                            role="assistant", content=vis.get("vis", None)
+                        ),
+                    )
+                    chunk = ChatCompletionStreamResponse(
+                        id=request.conv_uid,
+                        choices=[choice_data],
+                        model=request.model,
+                        created=int(time.time()),
+                    )
+                    json_content = model_to_json(
+                        chunk, exclude_unset=True, ensure_ascii=False
+                    )
+                    content = f"data: {json_content}\n\n"
+                    yield content
+        yield "data: [DONE]\n\n"
+    finally:
+        remove_conv_log_handler(conv_handler)
 
 
 async def chat_flow_wrapper(request: ChatCompletionRequestBody):
+    conv_handler = add_conv_log_handler(request.conv_uid)
     flow_service = get_chat_flow()
-    flow_req = request.to_common_llm_http_request_body()
-    flow_uid = request.chat_param
-    output = await flow_service.safe_chat_flow(flow_uid, flow_req)
-    if not output.success:
-        return JSONResponse(
-            model_to_dict(ErrorResponse(message=output.text, code=output.error_code)),
-            status_code=400,
-        )
-    else:
-        choice_data = ChatCompletionResponseChoice(
-            index=0,
-            message=ChatMessage(
-                role="assistant",
-                content=output.text,
-                reasoning_content=output.thinking_text,
-            ),
-        )
-        if output.usage:
-            usage = UsageInfo(**output.usage)
+    try:
+        flow_req = request.to_common_llm_http_request_body()
+        flow_uid = request.chat_param
+        output = await flow_service.safe_chat_flow(flow_uid, flow_req)
+        if not output.success:
+            return JSONResponse(
+                model_to_dict(
+                    ErrorResponse(message=output.text, code=output.error_code)
+                ),
+                status_code=400,
+            )
         else:
-            usage = UsageInfo()
-        return ChatCompletionResponse(
-            id=request.conv_uid, choices=[choice_data], model=request.model, usage=usage
-        )
+            choice_data = ChatCompletionResponseChoice(
+                index=0,
+                message=ChatMessage(
+                    role="assistant",
+                    content=output.text,
+                    reasoning_content=output.thinking_text,
+                ),
+            )
+            if output.usage:
+                usage = UsageInfo(**output.usage)
+            else:
+                usage = UsageInfo()
+            return ChatCompletionResponse(
+                id=request.conv_uid,
+                choices=[choice_data],
+                model=request.model,
+                usage=usage,
+            )
+    finally:
+        remove_conv_log_handler(conv_handler)
 
 
 async def chat_flow_stream_wrapper(
@@ -304,12 +328,16 @@ async def chat_flow_stream_wrapper(
     Args:
         request (OpenAPIChatCompletionRequest): request
     """
-    flow_service = get_chat_flow()
-    flow_req = request.to_common_llm_http_request_body()
-    flow_uid = request.chat_param
+    conv_handler = add_conv_log_handler(request.conv_uid)
+    try:
+        flow_service = get_chat_flow()
+        flow_req = request.to_common_llm_http_request_body()
+        flow_uid = request.chat_param
 
-    async for output in flow_service.chat_stream_openai(flow_uid, flow_req):
-        yield output
+        async for output in flow_service.chat_stream_openai(flow_uid, flow_req):
+            yield output
+    finally:
+        remove_conv_log_handler(conv_handler)
 
 
 def check_chat_request(request: ChatCompletionRequestBody = Body()):

@@ -172,9 +172,7 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 managed = true
-dev-dependencies = []
 default-groups = ["dev"]
-
 conflicts = [
     [
         { extra = "hf_qwen_omni" },
@@ -193,6 +191,9 @@ conflicts = [
         { extra = "hf_kimi" },
     ],
 ]
+
+[dependency-groups]
+dev = []
 [tool.hatch.build.targets.wheel]
 packages = ["src/dbgpt"]
 exclude = [

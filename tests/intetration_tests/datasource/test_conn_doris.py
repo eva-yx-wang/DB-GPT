@@ -51,7 +51,7 @@ def test_run_no_throw(db):
 
 def test_get_index(db):
     db.run(_create_table_sql)
-    assert db.get_indexes("test") == [('idx_name', 'name')]
+    assert db.get_indexes("test") == [{"name": "idx_name", "column_names": ["name"]}]
 
 
 def test_get_fields(db):

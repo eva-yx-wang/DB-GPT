@@ -1,6 +1,9 @@
+import re
 from typing import Dict, Type
 
 from dbgpt.component import SystemApp, logger
+from dbgpt.core import ModelRequest
+from dbgpt.core.interface.message import ModelMessage, ModelMessageRoleType
 from dbgpt.util.executor_utils import blocking_func_to_async
 from dbgpt.util.tracer import trace
 from dbgpt_app.scene import BaseChat, ChatScene
@@ -49,6 +52,42 @@ class ChatWithDbQA(BaseChat):
             )
             self.top_k = self.curr_config.schema_retrieve_top_k
 
+    async def _detect_get_db_raw_intent(self, user_input: str) -> bool:
+        """Use LLM to detect if user asks for full/raw table structure (get_db_raw=True)."""
+        if not user_input or not user_input.strip():
+            return False
+        system_prompt = (
+            "你是一个意图分类器。根据用户问题判断：用户是否在明确要求提供「完整的表结构」或「原始建表信息」。"
+            "例如：给我完整的表结构、show create table、全表结构、表结构详情、建表语句、表定义 等。"
+            "只回答 true 或 false，不要其他内容。"
+        )
+        try:
+            request = ModelRequest(
+                model=self._chat_param.model_name,
+                messages=[
+                    ModelMessage(
+                        role=ModelMessageRoleType.SYSTEM,
+                        content=system_prompt,
+                    ),
+                    ModelMessage(
+                        role=ModelMessageRoleType.HUMAN,
+                        content=user_input,
+                    ),
+                ],
+            )
+            output = await self.call_llm_operator(request)
+            text = (output.text or "").strip().lower()
+            # 取首词或首行中的 true/false
+            if not text:
+                return False
+            match = re.search(r"\b(true|false|是|否)\b", text)
+            if match:
+                return match.group(1) in ("true", "是")
+            return "true" in text[:20] or "是" in text[:20]
+        except Exception as e:
+            logger.warning("get_db_raw intent detection failed, default False: %s", e)
+            return False
+
     @trace()
     async def generate_input_values(self) -> Dict:
         try:
@@ -73,9 +112,6 @@ class ChatWithDbQA(BaseChat):
                     self._executor, self.database.table_simple_info
                 )
                 if len(table_infos) > self.curr_config.schema_max_tokens:
-                    # Load all tables schema, must be less then schema_max_tokens
-                    # Here we just truncate the table_infos
-                    # TODO: Count the number of tokens by LLMClient
                     table_infos = table_infos[: self.curr_config.schema_max_tokens]
 
         input_values = {

@@ -62,7 +62,7 @@ class DorisConnector(RDBMSConnector):
         ignore_tables: Optional[List[str]] = None,
         include_tables: Optional[List[str]] = None,
         sample_rows_in_table_info: int = 3,
-        indexes_in_table_info: bool = False,
+        indexes_in_table_info: bool = True,  # 获取索引信息
         custom_table_info: Optional[Dict[str, str]] = None,
         view_support: bool = False,
     ):
@@ -214,9 +214,9 @@ class DorisConnector(RDBMSConnector):
             cursor = session.execute(
                 text(
                     """
-                    SELECT DEFAULT_CHARACTER_SET_NAME 
-                    FROM information_schema.SCHEMATA 
-                    where SCHEMA_NAME=database() 
+                    SELECT DEFAULT_CHARACTER_SET_NAME
+                    FROM information_schema.SCHEMATA
+                    where SCHEMA_NAME=database()
                     """
                 )
             )
@@ -227,28 +227,12 @@ class DorisConnector(RDBMSConnector):
 
     def get_show_create_table(self, table_name) -> str:
         """Get show create table."""
-        # cur = self.get_session().execute(
-        #     text(
-        #         f"""show create table {table_name}"""
-        #     )
-        # )
-        # rows = cur.fetchone()
-        # create_sql = rows[1]
-        # return create_sql
-        # Here is the table description, returning the create table statement will
         with self.session_scope() as session:
-            cur = session.execute(
-                text(
-                    f"SELECT TABLE_COMMENT "
-                    f"FROM information_schema.tables "
-                    f'where TABLE_NAME="{table_name}" and TABLE_SCHEMA=database()'
-                )
-            )
-            table = cur.fetchone()
-            if table:
-                return str(table[0])
-            else:
-                return ""
+            cursor = session.execute(text(f"SHOW CREATE TABLE `{table_name}`"))
+            row = cursor.fetchone()
+            if row and len(row) >= 2:
+                return str(row[1])
+            return ""
 
     def get_table_comments(self, db_name=None):
         """Get table comments."""
@@ -317,12 +301,38 @@ class DorisConnector(RDBMSConnector):
             results = cursor.fetchall()
             return [x[0] for x in results]
 
+    def table_simple_info_for_tables(self, table_names: List[str]):
+        """Get table simple info only for the given table names."""
+        if not table_names:
+            return []
+        with self.session_scope() as session:
+            placeholders = ",".join(f'"{t}"' for t in table_names)
+            cursor = session.execute(
+                text(
+                    "SELECT concat(TABLE_NAME,'(',group_concat(COLUMN_NAME,','),');') "
+                    "FROM information_schema.columns "
+                    "where TABLE_SCHEMA=database() "
+                    f"AND TABLE_NAME IN ({placeholders}) "
+                    "GROUP BY TABLE_NAME"
+                )
+            )
+            results = cursor.fetchall()
+            return [x[0] for x in results]
+
     def get_indexes(self, table_name):
         """Get table indexes about specified table."""
         with self.session_scope() as session:
             cursor = session.execute(text(f"SHOW INDEX FROM {table_name}"))
             indexes = cursor.fetchall()
-            return [(index[2], index[4]) for index in indexes]
+            index_map: Dict[str, List[str]] = {}
+            for index in indexes:
+                key_name = index[2]
+                column_name = index[4]
+                index_map.setdefault(key_name, []).append(column_name)
+            return [
+                {"name": name, "column_names": cols}
+                for name, cols in index_map.items()
+            ]
 
     def get_table_info(self, table_names: Optional[List[str]] = None) -> str:
         """Get information about specified tables.

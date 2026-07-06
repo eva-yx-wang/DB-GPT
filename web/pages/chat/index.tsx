@@ -118,17 +118,7 @@ const Chat: React.FC = () => {
   const [resourceValue, setResourceValue] = useState<any>();
   const [knowledgeValue, setKnowledgeValue] = useState<string | null>(null);
   const [modelValue, setModelValue] = useState<string>('');
-
-  // Auto-send init message if present
-  useEffect(() => {
-    if (initMsg && chatId && !history.length && !replyLoading) {
-      // Small delay to ensure everything is loaded
-      const timer = setTimeout(() => {
-        handleChat(initMsg);
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [chatId, handleChat, history.length, initMsg, replyLoading]);
+  const handleChatRef = useRef<(content: UserChatContent, data?: Record<string, any>) => Promise<void>>();
 
   useEffect(() => {
     setTemperatureValue(appInfo?.param_need?.filter(item => item.type === 'temperature')[0]?.value || 0.6);
@@ -334,6 +324,18 @@ const Chat: React.FC = () => {
     },
     [chat, chatId, history, modelValue, scene],
   );
+
+  handleChatRef.current = handleChat;
+
+  // Auto-send init message if present
+  useEffect(() => {
+    if (initMsg && chatId && !history.length && !replyLoading) {
+      const timer = setTimeout(() => {
+        handleChatRef.current?.(initMsg);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [chatId, history.length, initMsg, replyLoading]);
 
   useAsyncEffect(async () => {
     // 如果是默认小助手，不获取历史记录

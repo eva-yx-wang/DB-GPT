@@ -1,0 +1,71 @@
+{
+    "include": [
+        "packages/**/src"
+    ],
+    "exclude": [
+        "**/__pycache__",
+        "**/node_modules",
+        ".venv",
+        ".venv.make",
+        "venv",
+        "env",
+        ".env",
+        "**/*.pyc"
+    ],
+    "executionEnvironments": [
+        {
+            "root": "packages/dbgpt-core",
+            "pythonVersion": "3.10",
+            "extraPaths": [
+                "src"
+            ]
+        },
+        {
+            "root": "packages/dbgpt-client",
+            "pythonVersion": "3.10",
+            "extraPaths": [
+                "src"
+            ]
+        },
+        {
+            "root": "packages/dbgpt-ext",
+            "pythonVersion": "3.10",
+            "extraPaths": [
+                "src"
+            ]
+        },
+        {
+            "root": "packages/dbgpt-serve",
+            "pythonVersion": "3.10",
+            "extraPaths": [
+                "src"
+            ]
+        },
+        {
+            "root": "packages/dbgpt-app",
+            "pythonVersion": "3.10",
+            "extraPaths": [
+                "src"
+            ]
+        },
+        {
+            "root": "packages/dbgpt-sandbox",
+            "pythonVersion": "3.10",
+            "extraPaths": [
+                "src"
+            ]
+        }
+    ],
+    "pythonVersion": "3.10",
+    "pythonPlatform": "Linux",
+    "typeCheckingMode": "basic",
+    "useLibraryCodeForTypes": true,
+    "reportMissingImports": "warning",
+    "reportMissingTypeStubs": false,
+    "reportUnusedImport": "information",
+    "reportUnusedClass": "information",
+    "reportUnusedFunction": "information",
+    "reportUnusedVariable": "information",
+    "reportDuplicateImport": "warning",
+    "reportWildcardImportFromLibrary": "warning"
+}
