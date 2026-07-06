@@ -1,6 +1,6 @@
 [system]
 # Load language from environment variable(It is set by the hook)
-language = "${env:DBGPT_LANG:-en}"
+language = "${env:DBGPT_LANG:-zh}"
 api_keys = []
 encrypt_key = "your_secret_key"
 
@@ -21,7 +21,7 @@ persist_path = "pilot/data"
 # Model Configurations
 [models]
 [[models.llms]]
-name = "${env:LLM_MODEL_NAME:-gpt-4o}"
+name = "${env:LLM_MODEL_NAME:-gpt-5.5}"
 provider = "${env:LLM_MODEL_PROVIDER:-proxy/openai}"
 api_base = "${env:OPENAI_API_BASE:-https://api.openai.com/v1}"
 api_key = "${env:OPENAI_API_KEY}"

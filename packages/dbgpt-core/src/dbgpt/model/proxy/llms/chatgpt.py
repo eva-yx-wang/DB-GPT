@@ -1,7 +1,17 @@
 import logging
 from concurrent.futures import Executor
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Type, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Dict,
+    List,
+    Optional,
+    Type,
+    Union,
+    cast,
+)
 
 from dbgpt.core import MessageConverter, ModelMetadata, ModelOutput, ModelRequest
 from dbgpt.core.awel.flow import (
@@ -23,7 +33,6 @@ from dbgpt.model.utils.chatgpt_utils import OpenAIParameters
 from dbgpt.util.i18n_utils import _
 
 if TYPE_CHECKING:
-    from httpx._types import ProxiesTypes, ProxyTypes
     from openai import AsyncAzureOpenAI, AsyncOpenAI
 
     ClientType = Union[AsyncAzureOpenAI, AsyncOpenAI]
@@ -94,7 +103,7 @@ class OpenAICompatibleDeployModelParameters(LLMDeployModelParameters):
 async def chatgpt_generate_stream(
     model: ProxyModel, tokenizer, params, device, context_len=2048
 ):
-    client: OpenAILLMClient = model.proxy_llm_client
+    client: OpenAILLMClient = cast(OpenAILLMClient, model.proxy_llm_client)
     request = parse_model_request(params, client.default_model, stream=True)
     async for r in client.generate_stream(request):
         yield r
@@ -131,6 +140,9 @@ async def chatgpt_generate_stream(
     documentation_url="https://github.com/openai/openai-python",
 )
 class OpenAILLMClient(ProxyLLMClient):
+    _context_length: int
+    _model_alias: str
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -138,8 +150,8 @@ class OpenAILLMClient(ProxyLLMClient):
         api_type: Optional[str] = None,
         api_version: Optional[str] = None,
         model: Optional[str] = None,
-        proxies: Optional["ProxiesTypes"] = None,
-        proxy: Optional["ProxyTypes"] = None,
+        proxies: Optional[Any] = None,
+        proxy: Optional[Any] = None,
         timeout: Optional[int] = 240,
         model_alias: Optional[str] = "gpt-4o-mini",
         context_length: Optional[int] = 8192,
@@ -155,8 +167,13 @@ class OpenAILLMClient(ProxyLLMClient):
                 "Please install openai by command `pip install openai"
             ) from exc
 
+        if not model_alias:
+            model_alias = model or "gpt-4o-mini"
+        if not context_length:
+            context_length = 8192
+
         self._init_params = OpenAIParameters(
-            api_type=self._resolve_env_vars(api_type),
+            api_type=self._resolve_env_vars(api_type) or "open_ai",
             api_base=self._resolve_env_vars(api_base),
             api_key=self._resolve_env_vars(api_key),
             api_version=self._resolve_env_vars(api_version),
@@ -180,35 +197,39 @@ class OpenAILLMClient(ProxyLLMClient):
         _ = self.client.default_headers
 
     @classmethod
-    def param_class(cls) -> Type[OpenAICompatibleDeployModelParameters]:
+    def param_class(cls) -> Type[LLMDeployModelParameters]:
         """Get model parameters class.
 
         This method will be called by the factory method to get the model parameters
         class.
 
         Returns:
-            Type[OpenAICompatibleDeployModelParameters]: model parameters class
+            Type[LLMDeployModelParameters]: model parameters class
 
         """
-        return OpenAICompatibleDeployModelParameters
+        return cast(
+            Type[LLMDeployModelParameters],
+            OpenAICompatibleDeployModelParameters,
+        )
 
     @classmethod
     def new_client(
         cls,
-        model_params: OpenAICompatibleDeployModelParameters,
+        model_params: LLMDeployModelParameters,
         default_executor: Optional[Executor] = None,
     ) -> "OpenAILLMClient":
         """Create a new client with the model parameters."""
+        params = cast(Any, model_params)
         return cls(
-            api_key=model_params.api_key,
-            api_base=model_params.api_base,
-            api_type=model_params.api_type,
-            api_version=model_params.api_version,
-            model=model_params.real_provider_model_name,
-            proxy=model_params.http_proxy,
-            model_alias=model_params.real_provider_model_name,
-            context_length=max(model_params.context_length or 8192, 8192),
-            # full_url=model_params.proxy_server_url,
+            api_key=params.api_key,
+            api_base=params.api_base,
+            api_type=params.api_type,
+            api_version=params.api_version,
+            model=params.real_provider_model_name,
+            proxy=params.http_proxy,
+            model_alias=params.real_provider_model_name,
+            context_length=max(params.context_length or 8192, 8192),
+            # full_url=params.proxy_server_url,
         )
 
     @classmethod
@@ -243,7 +264,7 @@ class OpenAILLMClient(ProxyLLMClient):
     def _build_request(
         self, request: ModelRequest, stream: Optional[bool] = False
     ) -> Dict[str, Any]:
-        payload = {"stream": stream}
+        payload: Dict[str, Any] = {"stream": stream}
         model = request.model or self.default_model
         payload["model"] = model
         # Apply openai kwargs
@@ -296,7 +317,7 @@ class OpenAILLMClient(ProxyLLMClient):
         self, messages: List[Dict[str, Any]], payload: Dict[str, Any]
     ) -> ModelOutput:
         chat_completion = await self.client.chat.completions.create(
-            messages=messages, **payload
+            messages=cast(Any, messages), **payload
         )
         reasoning_content = ""
         message_obj = chat_completion.choices[0].message
@@ -310,7 +331,7 @@ class OpenAILLMClient(ProxyLLMClient):
         self, messages: List[Dict[str, Any]], payload: Dict[str, Any]
     ) -> AsyncIterator[ModelOutput]:
         chat_completion = await self.client.chat.completions.create(
-            messages=messages, **payload
+            messages=cast(Any, messages), **payload
         )
         text = ""
         reasoning_content = ""
@@ -353,95 +374,148 @@ class OpenAILLMClient(ProxyLLMClient):
 register_proxy_model_adapter(
     OpenAILLMClient,
     supported_models=[
+        # GPT-5.5 — ChatGPT Pro 旗舰（含 Pro 专属 gpt-5.5-pro）
+        ModelMetadata(
+            model=[
+                "gpt-5.5",
+                "gpt-5.5-pro",
+                "gpt-5.5-2026-04-24",
+            ],
+            context_length=1000000,
+            max_output_length=128000,
+            description=(
+                "GPT-5.5 flagship for complex reasoning and coding; "
+                "gpt-5.5-pro for Pro-tier maximum capability"
+            ),
+            link="https://developers.openai.com/api/docs/guides/latest-model",
+            function_calling=True,
+        ),
+        # GPT-5.4 — 生产主力，含 Pro / Thinking 变体
+        ModelMetadata(
+            model=[
+                "gpt-5.4",
+                "gpt-5.4-pro",
+                "gpt-5.4-2026-03-05",
+                "gpt-5.4-mini",
+                "gpt-5.4-nano",
+            ],
+            context_length=1000000,
+            max_output_length=128000,
+            description=(
+                "GPT-5.4 family with native computer-use and 1M context; "
+                "mini/nano for cost-efficient workloads"
+            ),
+            link="https://developers.openai.com/api/docs/models",
+            function_calling=True,
+        ),
+        # GPT-5.3 / 5.2 / 5.1 — 上一代 GPT-5 系列
+        ModelMetadata(
+            model=[
+                "gpt-5.3-chat",
+                "gpt-5.3-codex",
+                "gpt-5.2",
+                "gpt-5.2-chat",
+                "gpt-5.2-codex",
+                "gpt-5.1",
+                "gpt-5.1-chat",
+                "gpt-5.1-codex",
+                "gpt-5.1-codex-mini",
+            ],
+            context_length=400000,
+            max_output_length=128000,
+            description=(
+                "GPT-5.1–5.3 generation models including chat and Codex variants"
+            ),
+            link="https://developers.openai.com/api/docs/models",
+            function_calling=True,
+        ),
+        # GPT-5 基础系列
+        ModelMetadata(
+            model=[
+                "gpt-5",
+                "gpt-5-pro",
+                "gpt-5-mini",
+                "gpt-5-nano",
+                "gpt-5-codex",
+            ],
+            context_length=400000,
+            max_output_length=128000,
+            description="Unified GPT-5 system with fast and reasoning variants",
+            link="https://developers.openai.com/api/docs/models",
+            function_calling=True,
+        ),
+        # o 系列推理模型（ChatGPT Pro 含 o1 / o3 / o4-mini）
+        ModelMetadata(
+            model=[
+                "o3",
+                "o3-2025-04-16",
+                "o3-mini",
+                "o3-mini-2025-01-31",
+                "o4-mini",
+                "o4-mini-2025-04-16",
+                "o1",
+                "o1-2024-12-17",
+                "o1-pro",
+                "o1-mini",
+                "o1-mini-2024-09-12",
+                "o1-preview",
+                "o1-preview-2024-09-12",
+            ],
+            context_length=200000,
+            max_output_length=100000,
+            description=(
+                "OpenAI o-series reasoning models; "
+                "o1-pro available to ChatGPT Pro subscribers"
+            ),
+            link="https://platform.openai.com/docs/models#o-series",
+            function_calling=True,
+        ),
+        # GPT-4.1 — 长上下文 API 模型
+        ModelMetadata(
+            model=[
+                "gpt-4.1",
+                "gpt-4.1-2025-04-14",
+                "gpt-4.1-mini",
+                "gpt-4.1-nano",
+            ],
+            context_length=1000000,
+            max_output_length=32768,
+            description="GPT-4.1 family with 1M-token context window",
+            link="https://platform.openai.com/docs/models#gpt-4-1",
+            function_calling=True,
+        ),
+        # GPT-4o — 旧版多模态（API 仍可用，ChatGPT 已逐步退役）
         ModelMetadata(
             model=[
                 "gpt-4o",
-                "gpt-4o-2024-08-06",
                 "gpt-4o-2024-11-20",
                 "gpt-4o-2024-08-06",
+                "gpt-4o-mini",
+                "gpt-4o-mini-2024-07-18",
             ],
             context_length=128000,
             max_output_length=16384,
-            description="The flagship model across audio, vision, and text by OpenAI",
-            link="https://openai.com/index/hello-gpt-4o/",
+            description=(
+                "Legacy GPT-4o omni models (text, vision, audio); "
+                "deprecated in ChatGPT, still in API"
+            ),
+            link="https://platform.openai.com/docs/models#gpt-4o",
             function_calling=True,
         ),
-        ModelMetadata(
-            model=["gpt-4o-mini", "gpt-4o-mini-2024-07-18", "gpt-4o-mini-2024-07-18"],
-            context_length=128000,
-            max_output_length=16384,
-            description="The flagship model across audio, vision, and text by OpenAI",
-            link="https://openai.com/index/hello-gpt-4o/",
-            function_calling=True,
-        ),
-        ModelMetadata(
-            model=["o1", "o1-2024-12-17"],
-            context_length=200000,
-            max_output_length=100000,
-            description="Reasoning model by OpenAI",
-            link="https://platform.openai.com/docs/models#o1",
-            function_calling=True,
-        ),
-        ModelMetadata(
-            model=["o1-mini", "o1-mini-2024-09-12"],
-            context_length=128000,
-            max_output_length=65536,
-            description="Reasoning model by OpenAI",
-            link="https://platform.openai.com/docs/models#o1",
-            function_calling=True,
-        ),
-        ModelMetadata(
-            model=["o1-preview", "o1-preview-2024-09-12"],
-            context_length=128000,
-            max_output_length=32768,
-            description="Reasoning model by OpenAI",
-            link="https://platform.openai.com/docs/models#o1",
-            function_calling=True,
-        ),
-        ModelMetadata(
-            model=["o3-mini", "o3-mini-2025-01-31"],
-            context_length=200000,
-            max_output_length=100000,
-            description="Reasoning model by OpenAI",
-            link="https://platform.openai.com/docs/models#o3-mini",
-            function_calling=True,
-        ),
+        # GPT-4 / 3.5 — 旧版兼容
         ModelMetadata(
             model=[
                 "gpt-4-turbo",
                 "gpt-4-turbo-2024-04-09",
-                "gpt-4-turbo-preview",
-                "gpt-4-0125-preview",
-                "gpt-4-1106-preview",
+                "gpt-4",
+                "gpt-4-0613",
+                "gpt-3.5-turbo",
+                "gpt-3.5-turbo-0125",
             ],
             context_length=128000,
             max_output_length=4096,
-            description="GPT-4-Turbo by OpenAI",
-            link="https://platform.openai.com/docs/models#gpt-4-turbo-and-gpt-4",
-            function_calling=True,
-        ),
-        ModelMetadata(
-            model=[
-                "gpt-4",
-                "gpt-4-0613",
-                "gpt-4-0314",
-            ],
-            context_length=8192,
-            max_output_length=8192,
-            description="GPT-4-Turbo by OpenAI",
-            link="https://platform.openai.com/docs/models#gpt-4-turbo-and-gpt-4",
-            function_calling=True,
-        ),
-        ModelMetadata(
-            model=[
-                "gpt-3.5-turbo-0125",
-                "gpt-3.5-turbo",
-                "gpt-3.5-turbo-1106",
-            ],
-            context_length=16385,
-            max_output_length=4096,
-            description="GPT-3.5 by OpenAI",
-            link="https://platform.openai.com/docs/models#gpt-3-5-turbo",
+            description="Legacy GPT-4 and GPT-3.5 models for backward compatibility",
+            link="https://platform.openai.com/docs/models",
             function_calling=True,
         ),
     ],

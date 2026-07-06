@@ -238,6 +238,9 @@ def _parse_table_summary_with_metadata(
             if matched_columns:
                 key_str = ", ".join(matched_columns)
                 index_keys.append(f"{index_name}(`{key_str}`) ")
+            elif index_creation_command:
+                # Doris/MySQL SHOW INDEX: (Key_name, Column_name)
+                index_keys.append(f"{index_name}(`{index_creation_command}`) ")
         else:
             key_str = ", ".join(index["column_names"])
             index_keys.append(f"{index['name']}(`{key_str}`) ")
@@ -291,6 +294,9 @@ def _parse_table_summary(
             if matched_columns:
                 key_str = ", ".join(matched_columns)
                 index_keys.append(f"{index_name}(`{key_str}`) ")
+            elif index_creation_command:
+                # Doris/MySQL SHOW INDEX: (Key_name, Column_name)
+                index_keys.append(f"{index_name}(`{index_creation_command}`) ")
         else:
             key_str = ", ".join(index["column_names"])
             index_keys.append(f"{index['name']}(`{key_str}`) ")

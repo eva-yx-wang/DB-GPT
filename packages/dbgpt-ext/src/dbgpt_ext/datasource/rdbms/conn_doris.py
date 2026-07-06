@@ -227,28 +227,12 @@ class DorisConnector(RDBMSConnector):
 
     def get_show_create_table(self, table_name) -> str:
         """Get show create table."""
-        # cur = self.get_session().execute(
-        #     text(
-        #         f"""show create table {table_name}"""
-        #     )
-        # )
-        # rows = cur.fetchone()
-        # create_sql = rows[1]
-        # return create_sql
-        # Here is the table description, returning the create table statement will
         with self.session_scope() as session:
-            cur = session.execute(
-                text(
-                    f"SELECT TABLE_COMMENT "
-                    f"FROM information_schema.tables "
-                    f'where TABLE_NAME="{table_name}" and TABLE_SCHEMA=database()'
-                )
-            )
-            table = cur.fetchone()
-            if table:
-                return str(table[0])
-            else:
-                return ""
+            cursor = session.execute(text(f"SHOW CREATE TABLE `{table_name}`"))
+            row = cursor.fetchone()
+            if row and len(row) >= 2:
+                return str(row[1])
+            return ""
 
     def get_table_comments(self, db_name=None):
         """Get table comments."""
@@ -340,7 +324,15 @@ class DorisConnector(RDBMSConnector):
         with self.session_scope() as session:
             cursor = session.execute(text(f"SHOW INDEX FROM {table_name}"))
             indexes = cursor.fetchall()
-            return [(index[2], index[4]) for index in indexes]
+            index_map: Dict[str, List[str]] = {}
+            for index in indexes:
+                key_name = index[2]
+                column_name = index[4]
+                index_map.setdefault(key_name, []).append(column_name)
+            return [
+                {"name": name, "column_names": cols}
+                for name, cols in index_map.items()
+            ]
 
     def get_table_info(self, table_names: Optional[List[str]] = None) -> str:
         """Get information about specified tables.
