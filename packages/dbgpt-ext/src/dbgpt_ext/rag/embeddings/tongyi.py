@@ -1,5 +1,6 @@
 """Tongyi embeddings for RAG."""
 
+import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Type
 
@@ -9,15 +10,35 @@ from dbgpt.core.interface.parameter import EmbeddingDeployModelParameters
 from dbgpt.model.adapter.base import register_embedding_adapter
 from dbgpt.util.i18n_utils import _
 
+_FALLBACK_OPENAPI_EMBEDDING_URL = (
+    "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
+)
+_OPENAPI_EMBEDDING_MODELS = frozenset({"text-embedding-v3", "text-embedding-v4"})
+
+
+def _default_openapi_embedding_url() -> str:
+    url = os.getenv("TONGYI_EMBEDDING_MODEL_API_URL")
+    if url:
+        return url
+    return _FALLBACK_OPENAPI_EMBEDDING_URL
+
 
 @dataclass
 class TongyiEmbeddingDeployModelParameters(EmbeddingDeployModelParameters):
-    """Qianfan Embeddings deploy model parameters."""
+    """Tongyi Embeddings deploy model parameters."""
 
     provider: str = "proxy/tongyi"
 
     api_key: Optional[str] = field(
         default=None, metadata={"help": _("The API key for the embeddings API.")}
+    )
+    api_url: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": _(
+                "OpenAI-compatible embeddings API URL. Required for text-embedding-v3/v4."
+            ),
+        },
     )
     backend: Optional[str] = field(
         default="text-embedding-v1",
@@ -27,6 +48,10 @@ class TongyiEmbeddingDeployModelParameters(EmbeddingDeployModelParameters):
                 "backend is None, use name as the real model name."
             ),
         },
+    )
+    timeout: int = field(
+        default=60,
+        metadata={"help": _("The timeout for the request in seconds.")},
     )
 
     @property
@@ -38,26 +63,8 @@ class TongyiEmbeddingDeployModelParameters(EmbeddingDeployModelParameters):
 class TongYiEmbeddings(BaseModel, Embeddings):
     """The tongyi embeddings.
 
-    import dashscope
-    from http import HTTPStatus
-    from dashscope import TextEmbedding
-
-    dashscope.api_key = ''
-    def embed_with_list_of_str():
-        resp = TextEmbedding.call(
-            model=TextEmbedding.Models.text_embedding_v1,
-            # 最多支持10条，每条最长支持2048tokens
-            input=[
-                '风急天高猿啸哀', '渚清沙白鸟飞回', '无边落木萧萧下', '不尽长江滚滚来'
-            ]
-        )
-        if resp.status_code == HTTPStatus.OK:
-            print(resp)
-        else:
-            print(resp)
-
-    if __name__ == '__main__':
-        embed_with_list_of_str()
+    Legacy models (e.g. text-embedding-v1) use the dashscope SDK.
+    text-embedding-v3/v4 use DashScope's OpenAI-compatible embeddings API.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, protected_namespaces=())
@@ -67,19 +74,32 @@ class TongYiEmbeddings(BaseModel, Embeddings):
     model_name: str = Field(
         default="text-embedding-v1", description="The name of the model to use."
     )
+    api_url: Optional[str] = Field(
+        default=None,
+        description="OpenAI-compatible embeddings API URL.",
+    )
+    timeout: int = Field(
+        default=60, description="The timeout for the request in seconds."
+    )
 
     def __init__(self, **kwargs):
-        """Initialize the OpenAPIEmbeddings."""
-        try:
-            import dashscope  # type: ignore
-        except ImportError as exc:
-            raise ValueError(
-                "Could not import python package: dashscope "
-                "Please install dashscope by command `pip install dashscope"
-            ) from exc
-        dashscope.TextEmbedding.api_key = kwargs.get("api_key")
+        """Initialize TongYiEmbeddings."""
+        api_key = kwargs.get("api_key")
+        api_url = kwargs.get("api_url")
+        timeout = kwargs.get("timeout", 60)
         super().__init__(**kwargs)
-        self._api_key = kwargs.get("api_key")
+        self._api_key = api_key
+        self._api_url = api_url
+        self._timeout = timeout
+        if not self._effective_api_url():
+            try:
+                import dashscope  # type: ignore
+            except ImportError as exc:
+                raise ValueError(
+                    "Could not import python package: dashscope "
+                    "Please install dashscope by command `pip install dashscope"
+                ) from exc
+            dashscope.TextEmbedding.api_key = api_key
 
     @classmethod
     def param_class(cls) -> Type[TongyiEmbeddingDeployModelParameters]:
@@ -94,7 +114,71 @@ class TongYiEmbeddings(BaseModel, Embeddings):
         return cls(
             api_key=parameters.api_key,
             model_name=parameters.real_provider_model_name,
+            api_url=parameters.api_url,
+            timeout=parameters.timeout,
         )
+
+    def _effective_api_url(self) -> Optional[str]:
+        if self._api_url:
+            return self._api_url
+        if str(self.model_name) in _OPENAPI_EMBEDDING_MODELS:
+            return _default_openapi_embedding_url()
+        return None
+
+    def _max_batch_size(self) -> int:
+        if str(self.model_name) in _OPENAPI_EMBEDDING_MODELS:
+            return 6
+        return 25
+
+    def _embed_via_openapi(self, texts: List[str]) -> List[List[float]]:
+        import requests
+        from dbgpt.rag.embedding.embeddings import _handle_request_result
+
+        api_url = self._effective_api_url()
+        if not api_url:
+            raise RuntimeError("OpenAI-compatible embedding API URL is not configured.")
+
+        session = requests.Session()
+        if self._api_key:
+            session.headers.update({"Authorization": f"Bearer {self._api_key}"})
+        res = session.post(
+            api_url,
+            json={"input": texts, "model": self.model_name},
+            timeout=self._timeout,
+        )
+        return _handle_request_result(res)
+
+    def _embed_via_dashscope_sdk(self, texts: List[str]) -> List[List[float]]:
+        from dashscope import TextEmbedding
+
+        embeddings: List[List[float]] = []
+        max_batch_chunks_size = self._max_batch_size()
+        for i in range(0, len(texts), max_batch_chunks_size):
+            batch_texts = texts[i : i + max_batch_chunks_size]
+            resp = TextEmbedding.call(
+                model=self.model_name, input=batch_texts, api_key=self._api_key
+            )
+            if not isinstance(resp, dict):
+                raise RuntimeError(f"Unexpected Tongyi embedding response: {resp!r}")
+
+            output = resp.get("output")
+            if output is None:
+                message = resp.get("message") or resp.get("code") or str(resp)
+                raise RuntimeError(
+                    f"Tongyi embedding failed for model {self.model_name}: {message}"
+                )
+
+            batch_embeddings = output.get("embeddings")
+            if not batch_embeddings:
+                raise RuntimeError(
+                    f"Tongyi embedding returned empty embeddings for model "
+                    f"{self.model_name}: {resp}"
+                )
+            sorted_embeddings = sorted(
+                batch_embeddings, key=lambda e: e["text_index"]
+            )
+            embeddings.extend([result["embedding"] for result in sorted_embeddings])
+        return embeddings
 
     def embed_documents(
         self, texts: List[str], max_batch_chunks_size=25
@@ -112,29 +196,14 @@ class TongYiEmbeddings(BaseModel, Embeddings):
             Embedded texts as List[List[float]], where each inner List[float]
                 corresponds to a single input text.
         """
-        from dashscope import TextEmbedding
-
-        embeddings = []
-        # batch size too longer may cause embedding error,eg: qwen online embedding
-        # models must not be larger than 25
-        # text-embedding-v3  embedding batch size should not be larger than 6
-        if str(self.model_name) == "text-embedding-v3":
-            max_batch_chunks_size = 6
-
-        for i in range(0, len(texts), max_batch_chunks_size):
-            batch_texts = texts[i : i + max_batch_chunks_size]
-            resp = TextEmbedding.call(
-                model=self.model_name, input=batch_texts, api_key=self._api_key
-            )
-            if "output" not in resp:
-                raise RuntimeError(resp["message"])
-
-            # 提取并排序嵌入
-            batch_embeddings = resp["output"]["embeddings"]
-            sorted_embeddings = sorted(batch_embeddings, key=lambda e: e["text_index"])
-            embeddings.extend([result["embedding"] for result in sorted_embeddings])
-
-        return embeddings
+        if self._effective_api_url():
+            embeddings: List[List[float]] = []
+            batch_size = min(max_batch_chunks_size, self._max_batch_size())
+            for i in range(0, len(texts), batch_size):
+                batch_texts = texts[i : i + batch_size]
+                embeddings.extend(self._embed_via_openapi(batch_texts))
+            return embeddings
+        return self._embed_via_dashscope_sdk(texts)
 
     def embed_query(self, text: str) -> List[float]:
         """Compute query embeddings using a OpenAPI embedding model.
@@ -159,6 +228,15 @@ register_embedding_adapter(
                 "The embedding model are trained by TongYi, it support more than 50 "
                 "working languages."
             ),
-        )
+        ),
+        EmbeddingModelMetadata(
+            model="text-embedding-v4",
+            dimension=1024,
+            context_length=8192,
+            description=_(
+                "The embedding model are trained by TongYi (v4), it support more than "
+                "50 working languages."
+            ),
+        ),
     ],
 )

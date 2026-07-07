@@ -49,14 +49,13 @@ persist_path = "pilot/data"
 # Model Configurations
 [models]
 [[models.llms]]
-name = "qwen3-max"
+name = "${env:LLM_MODEL_NAME:-qwen3-max}"
 provider = "${env:LLM_MODEL_PROVIDER:-proxy/tongyi}"
-api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_base = "${env:DASHSCOPE_API_BASE:-https://dashscope.aliyuncs.com/compatible-mode/v1}"
 api_key = "${env:DASHSCOPE_API_KEY}"
 
 [[models.embeddings]]
-name = "text-embedding-v4"
-## embedding 使用本地model
+name = "${env:EMBEDDING_MODEL_NAME:-text-embedding-v4}"
 provider = "${env:EMBEDDING_MODEL_PROVIDER:-proxy/tongyi}"
-api_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
+api_url = "${env:EMBEDDING_MODEL_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings}"
 api_key = "${env:DASHSCOPE_API_KEY}"

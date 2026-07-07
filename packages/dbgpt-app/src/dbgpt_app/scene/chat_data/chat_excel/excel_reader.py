@@ -297,11 +297,38 @@ class ExcelReader:
             columns.append(desc[0])
         return columns, results.fetchall()
 
+    def _resolve_table_name(self, table_name: str) -> str:
+        """Resolve table name, falling back to temp_table if target is missing."""
+        candidates = [table_name]
+        if table_name != self.temp_table_name:
+            candidates.append(self.temp_table_name)
+        in_list = ", ".join(f"'{name}'" for name in candidates)
+        _, datas = self.run(
+            f"SELECT table_name FROM duckdb_tables() WHERE table_name IN ({in_list})",
+            table_name,
+            transform=False,
+        )
+        existing = {row[0] for row in datas}
+        if table_name in existing:
+            return table_name
+        if self.temp_table_name in existing:
+            logger.warning(
+                "Table '%s' not found in DuckDB, falling back to '%s'",
+                table_name,
+                self.temp_table_name,
+            )
+            return self.temp_table_name
+        raise ValueError(
+            f"No table '{table_name}' or '{self.temp_table_name}' in Excel database. "
+            "Please wait for file analysis to complete or re-upload the file."
+        )
+
     def get_df_by_sql_ex(self, sql: str, table_name: Optional[str] = None):
-        table_name = table_name or self.table_name
+        table_name = self._resolve_table_name(table_name or self.table_name)
         return self.run(sql, table_name, df_res=True)
 
     def get_sample_data(self, table_name: str):
+        table_name = self._resolve_table_name(table_name)
         columns, datas = self.run(
             f"SELECT * FROM {table_name} USING SAMPLE 5;",
             table_name=table_name,
@@ -327,12 +354,15 @@ AND dc.schema_name = 'main';
         return columns, datas
 
     def get_create_table_sql(self, table_name: str) -> str:
+        table_name = self._resolve_table_name(table_name)
         sql = f"""SELECT comment, table_name, database_name FROM duckdb_tables() \
         where table_name = '{table_name}'"""
 
         columns, datas = self.run(sql, table_name, transform=False)
-        table_comment = datas[0][0]
+        table_comment = datas[0][0] if datas else ""
         cl_columns, cl_datas = self.get_columns(table_name)
+        if not cl_datas:
+            raise ValueError(f"Table '{table_name}' has no columns.")
         ddl_sql = f"CREATE TABLE {table_name} (\n"
         column_strs = []
         for cl_data in cl_datas:

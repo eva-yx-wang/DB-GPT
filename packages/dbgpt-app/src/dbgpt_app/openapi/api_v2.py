@@ -150,6 +150,8 @@ async def chat_completions(
                     text_output=False,
                     openai_format=True,
                     conv_uid=request.conv_uid,
+                    chat_mode=request.chat_mode,
+                    chat_param=request.chat_param,
                 ),
                 headers=headers,
                 media_type="text/event-stream",
@@ -221,7 +223,12 @@ async def no_stream_wrapper(
         request (OpenAPIChatCompletionRequest): request
         chat (BaseChat): chat
     """
-    conv_handler = add_conv_log_handler(request.conv_uid)
+    conv_uid = request.conv_uid or str(uuid.uuid4())
+    conv_handler = add_conv_log_handler(
+        conv_uid,
+        chat_mode=request.chat_mode,
+        chat_param=request.chat_param,
+    )
     try:
         with root_tracer.start_span("no_stream_generator"):
             response = await chat.nostream_call()
@@ -232,7 +239,7 @@ async def no_stream_wrapper(
             )
             usage = UsageInfo()
             return ChatCompletionResponse(
-                id=request.conv_uid,
+                id=conv_uid,
                 choices=[choice_data],
                 model=request.model,
                 usage=usage,
@@ -247,10 +254,15 @@ async def chat_app_stream_wrapper(request: ChatCompletionRequestBody = None):
         request (OpenAPIChatCompletionRequest): request
         token (APIToken): token
     """
-    conv_handler = add_conv_log_handler(request.conv_uid)
+    conv_uid = request.conv_uid or str(uuid.uuid4())
+    conv_handler = add_conv_log_handler(
+        conv_uid,
+        chat_mode=request.chat_mode,
+        chat_param=request.chat_param,
+    )
     try:
         async for output in multi_agents.app_agent_chat(
-            conv_uid=request.conv_uid,
+            conv_uid=conv_uid,
             gpts_name=request.chat_param,
             user_query=request.single_prompt(),
             user_code=request.user_name,
@@ -269,7 +281,7 @@ async def chat_app_stream_wrapper(request: ChatCompletionRequestBody = None):
                         ),
                     )
                     chunk = ChatCompletionStreamResponse(
-                        id=request.conv_uid,
+                        id=conv_uid,
                         choices=[choice_data],
                         model=request.model,
                         created=int(time.time()),
@@ -285,7 +297,12 @@ async def chat_app_stream_wrapper(request: ChatCompletionRequestBody = None):
 
 
 async def chat_flow_wrapper(request: ChatCompletionRequestBody):
-    conv_handler = add_conv_log_handler(request.conv_uid)
+    conv_uid = request.conv_uid or str(uuid.uuid4())
+    conv_handler = add_conv_log_handler(
+        conv_uid,
+        chat_mode=request.chat_mode,
+        chat_param=request.chat_param,
+    )
     flow_service = get_chat_flow()
     try:
         flow_req = request.to_common_llm_http_request_body()
@@ -312,7 +329,7 @@ async def chat_flow_wrapper(request: ChatCompletionRequestBody):
             else:
                 usage = UsageInfo()
             return ChatCompletionResponse(
-                id=request.conv_uid,
+                id=conv_uid,
                 choices=[choice_data],
                 model=request.model,
                 usage=usage,
@@ -328,7 +345,12 @@ async def chat_flow_stream_wrapper(
     Args:
         request (OpenAPIChatCompletionRequest): request
     """
-    conv_handler = add_conv_log_handler(request.conv_uid)
+    conv_uid = request.conv_uid or str(uuid.uuid4())
+    conv_handler = add_conv_log_handler(
+        conv_uid,
+        chat_mode=request.chat_mode,
+        chat_param=request.chat_param,
+    )
     try:
         flow_service = get_chat_flow()
         flow_req = request.to_common_llm_http_request_body()
