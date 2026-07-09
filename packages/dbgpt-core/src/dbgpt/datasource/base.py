@@ -153,15 +153,18 @@ class BaseConnector(ABC):
             List: result list
         """
 
-    def run_to_df(self, command: str, fetch: str = "all"):
+    def run_to_df(
+        self,
+        command: str,
+        fetch: str = "all",
+        timeout: Optional[float] = None,
+    ):
         """Execute sql command and return result as dataframe.
 
         Args:
             command (str): sql command
             fetch (str): fetch type
-
-        Returns:
-            DataFrame: result dataframe
+            timeout (Optional[float]): query timeout in seconds
         """
         raise NotImplementedError("Current connector does not support run_to_df")
 

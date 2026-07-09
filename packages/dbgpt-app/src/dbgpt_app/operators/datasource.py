@@ -14,6 +14,7 @@ from dbgpt.core.awel.flow import (
     ViewMetadata,
     ui,
 )
+from dbgpt.core.awel.trigger.http_trigger import HttpFileDownloadBody
 from dbgpt.core.operators import BaseLLM
 from dbgpt.util.i18n_utils import _
 from dbgpt.vis.tags.vis_chart import default_chart_type_prompt
@@ -352,6 +353,89 @@ class HODatasourceExecutorOperator(GPTVisMixin, MapOperator[dict, str]):
         view = thoughts + "\n\n" + view
         await self.save_view_message(self.current_dag_context, view)
         return view
+
+
+class HODatasourceCsvExportOperator(MapOperator[str, HttpFileDownloadBody]):
+    """Export SQL query result as a CSV file for browser download."""
+
+    metadata = ViewMetadata(
+        label=_("Datasource CSV Export Operator"),
+        name="higher_order_datasource_csv_export_operator",
+        description=_(
+            "Export SQL query result to a CSV file and trigger browser download. "
+            "Connect after Datasource Executor Operator."
+        ),
+        category=OperatorCategory.DATABASE,
+        parameters=[
+            Parameter.build_from(
+                _("CSV Filename"),
+                "filename",
+                type=str,
+                optional=True,
+                default="query_result.csv",
+                description=_("The downloaded CSV file name."),
+            ),
+            Parameter.build_from(
+                _("Include Index Column"),
+                "include_index",
+                type=bool,
+                optional=True,
+                default=False,
+                description=_("Whether to include DataFrame index in CSV."),
+            ),
+        ],
+        inputs=[
+            IOField.build_from(
+                _("SQL result trigger"),
+                "sql_result",
+                str,
+                description=_(
+                    "Connect to Datasource Executor Operator sql_result output. "
+                    "The upstream SQL execution stores query data in DAG context."
+                ),
+            )
+        ],
+        outputs=[
+            IOField.build_from(
+                _("CSV File Download"),
+                "csv_file",
+                HttpFileDownloadBody,
+                description=_("CSV file response for browser download."),
+            )
+        ],
+        tags={"order": TAGS_ORDER_HIGH},
+    )
+
+    def __init__(
+        self,
+        filename: str = "query_result.csv",
+        include_index: bool = False,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self._filename = filename or "query_result.csv"
+        self._include_index = include_index
+
+    async def map(self, sql_result: str) -> HttpFileDownloadBody:
+        """Build a CSV download response from the latest query result."""
+        from dbgpt.util.pd_utils import df_to_csv
+
+        _ = sql_result
+        data_df = await self.current_dag_context.get_from_share_data(
+            HODatasourceExecutorOperator._share_data_key
+        )
+        if data_df is None:
+            raise ValueError(
+                "No SQL query result found. Please connect this operator after "
+                "Datasource Executor Operator."
+            )
+        csv_content = df_to_csv(data_df, index=self._include_index)
+        return HttpFileDownloadBody(
+            content=csv_content,
+            filename=self._filename,
+            media_type="text/csv",
+            encoding="utf-8-sig",
+        )
 
 
 class HODatasourceDashboardOperator(GPTVisMixin, MapOperator[dict, str]):
