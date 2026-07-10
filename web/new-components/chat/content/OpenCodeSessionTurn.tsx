@@ -1,11 +1,12 @@
 import markdownComponents, { markdownPlugins, preprocessLaTeX } from '@/components/chat/chat-content/config';
 import { STORAGE_USERINFO_KEY } from '@/utils/constants/index';
+import { normalizeChatFlowMessage } from '@/utils/vis-file-download';
 import { CheckOutlined, CopyOutlined, LoadingOutlined } from '@ant-design/icons';
 import { GPTVis } from '@antv/gpt-vis';
 import { Spin, Tooltip, message } from 'antd';
 import classNames from 'classnames';
 import Image from 'next/image';
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ToolIcon, getStatusText, getToolIconName } from '../icons/ToolIcon';
 import { BasicTool } from '../tools/BasicTool';
@@ -472,6 +473,13 @@ const OpenCodeSessionTurn: React.FC<OpenCodeSessionTurnProps> = ({
   const [stepsExpanded, setStepsExpanded] = useState(defaultStepsExpanded);
   const [elapsedTime, setElapsedTime] = useState(0);
 
+  const normalizedAssistantMessage = useMemo(() => {
+    if (!assistantMessage) {
+      return '';
+    }
+    return normalizeChatFlowMessage(assistantMessage);
+  }, [assistantMessage]);
+
   useEffect(() => {
     if (!isWorking || !startTime) return;
 
@@ -638,14 +646,14 @@ const OpenCodeSessionTurn: React.FC<OpenCodeSessionTurnProps> = ({
               <div className='flex-1 min-w-0 flex flex-col gap-2'>
                 {stepsPlacement === 'inside' && stepsBlock}
 
-                {assistantMessage && (
+                {normalizedAssistantMessage && (
                   <div
                     data-slot='assistant-response'
                     className='group relative bg-white dark:bg-[rgba(255,255,255,0.08)] p-4 rounded-2xl rounded-tl-none shadow-sm border border-gray-100 dark:border-gray-800'
                   >
                     <div className='prose prose-sm dark:prose-invert max-w-none'>
                       <GPTVis components={markdownComponents as any} {...(markdownPlugins as any)}>
-                        {preprocessLaTeX(formatMarkdownVal(assistantMessage))}
+                        {preprocessLaTeX(formatMarkdownVal(normalizedAssistantMessage))}
                       </GPTVis>
                     </div>
                     {endTime && (
@@ -654,18 +662,18 @@ const OpenCodeSessionTurn: React.FC<OpenCodeSessionTurnProps> = ({
                           {formatTimestamp(endTime)}
                           {duration && <span className='ml-2'>· {duration}</span>}
                         </span>
-                        <CopyButton text={assistantMessage} className='opacity-0 group-hover:opacity-100' />
+                        <CopyButton text={normalizedAssistantMessage} className='opacity-0 group-hover:opacity-100' />
                       </div>
                     )}
                     {!endTime && (
                       <div className='absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity'>
-                        <CopyButton text={assistantMessage} />
+                        <CopyButton text={normalizedAssistantMessage} />
                       </div>
                     )}
                   </div>
                 )}
 
-                {isWorking && !assistantMessage && !thinkingContent && (
+                {isWorking && !normalizedAssistantMessage && !thinkingContent && (
                   <div
                     data-slot='loading-placeholder'
                     className='bg-white dark:bg-[rgba(255,255,255,0.08)] p-4 rounded-2xl rounded-tl-none border border-gray-100 dark:border-gray-800'

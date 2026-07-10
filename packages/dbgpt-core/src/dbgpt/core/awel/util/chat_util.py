@@ -1,5 +1,6 @@
 """The utility functions for chatting with the DAG task."""
 
+import base64
 import json
 import traceback
 from typing import Any, AsyncIterator, Dict, Optional
@@ -13,7 +14,21 @@ from ...schema.api import (
     UsageInfo,
 )
 from ..operators.base import BaseOperator
-from ..trigger.http_trigger import CommonLLMHttpResponseBody
+from ..trigger.http_trigger import CommonLLMHttpResponseBody, HttpFileDownloadBody
+
+
+def http_file_download_body_to_vis_text(file_body: HttpFileDownloadBody) -> str:
+    """Convert file download body to a vis tag for chat/SSE responses."""
+    from dbgpt.vis.tags.vis_file_download import VisFileDownload
+
+    content_b64 = base64.b64encode(
+        file_body.content.encode(file_body.encoding)
+    ).decode("ascii")
+    return VisFileDownload().sync_display(
+        filename=file_body.filename,
+        media_type=file_body.media_type or "application/octet-stream",
+        content_base64=content_b64,
+    )
 
 
 def is_chat_flow_type(output_obj: Any, is_class: bool = False) -> bool:
@@ -281,6 +296,9 @@ def parse_single_output(
     elif isinstance(output, CommonLLMHttpResponseBody):
         error_code = output.error_code
         text = output.text
+    elif isinstance(output, HttpFileDownloadBody):
+        error_code = 0
+        text = http_file_download_body_to_vis_text(output)
     elif isinstance(output, dict):
         error_code = 0
         text = json.dumps(output, ensure_ascii=False)

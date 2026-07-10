@@ -80,6 +80,7 @@ const ChatContextProvider = ({ children }: { children: React.ReactElement }) => 
   const chatId = searchParams?.get('id') ?? '';
   const scene = searchParams?.get('scene') ?? '';
   const db_param = searchParams?.get('db_param') ?? '';
+  const modelParam = searchParams?.get('model') ?? '';
   const [isContract, setIsContract] = useState(false);
   const [model, setModel] = useState<string>('');
   const [isMenuExpand, setIsMenuExpand] = useState<boolean>(scene !== 'chat_dashboard');
@@ -137,8 +138,12 @@ const ChatContextProvider = ({ children }: { children: React.ReactElement }) => 
   }, []);
 
   useEffect(() => {
-    setModel(modelList[0]);
-  }, [modelList, modelList?.length]);
+    if (modelParam) {
+      setModel(modelParam);
+    } else if (modelList?.length) {
+      setModel(modelList[0]);
+    }
+  }, [modelList, modelList?.length, modelParam]);
 
   const contextValue = {
     isContract,

@@ -292,6 +292,7 @@ class HODatasourceExecutorOperator(GPTVisMixin, MapOperator[dict, str]):
     """Execute the context from the datasource."""
 
     _share_data_key = "__datasource_executor_result__"
+    _share_data_sql_key = "__datasource_executor_sql__"
 
     class MarkdownMapper(MapOperator[str, str]):
         async def map(self, context: str) -> str:
@@ -349,21 +350,24 @@ class HODatasourceExecutorOperator(GPTVisMixin, MapOperator[dict, str]):
         await self.current_dag_context.save_to_share_data(
             HODatasourceExecutorOperator._share_data_key, data_df
         )
+        await self.current_dag_context.save_to_share_data(
+            HODatasourceExecutorOperator._share_data_sql_key, sql
+        )
         view = await vis.display(chart=sql_dict, data_df=data_df)
         view = thoughts + "\n\n" + view
         await self.save_view_message(self.current_dag_context, view)
         return view
 
 
-class HODatasourceCsvExportOperator(MapOperator[str, HttpFileDownloadBody]):
-    """Export SQL query result as a CSV file for browser download."""
+class HODatasourceSqlCsvSummaryOperator(GPTVisMixin, MapOperator[str, str]):
+    """Return executed SQL, row count, preview and CSV download for chat UI."""
 
     metadata = ViewMetadata(
-        label=_("Datasource CSV Export Operator"),
-        name="higher_order_datasource_csv_export_operator",
+        label=_("Datasource SQL CSV Summary Operator"),
+        name="higher_order_datasource_sql_csv_summary_operator",
         description=_(
-            "Export SQL query result to a CSV file and trigger browser download. "
-            "Connect after Datasource Executor Operator."
+            "Show executed SQL and query stats in chat, and trigger CSV download "
+            "when rows exist. Connect after Datasource Executor Operator."
         ),
         category=OperatorCategory.DATABASE,
         parameters=[
@@ -383,6 +387,14 @@ class HODatasourceCsvExportOperator(MapOperator[str, HttpFileDownloadBody]):
                 default=False,
                 description=_("Whether to include DataFrame index in CSV."),
             ),
+            Parameter.build_from(
+                _("Preview Max Rows"),
+                "preview_max_rows",
+                type=int,
+                optional=True,
+                default=5,
+                description=_("Max rows to show in markdown preview."),
+            ),
         ],
         inputs=[
             IOField.build_from(
@@ -390,17 +402,18 @@ class HODatasourceCsvExportOperator(MapOperator[str, HttpFileDownloadBody]):
                 "sql_result",
                 str,
                 description=_(
-                    "Connect to Datasource Executor Operator sql_result output. "
-                    "The upstream SQL execution stores query data in DAG context."
+                    "Connect to Datasource Executor Operator sql_result output."
                 ),
             )
         ],
         outputs=[
             IOField.build_from(
-                _("CSV File Download"),
-                "csv_file",
-                HttpFileDownloadBody,
-                description=_("CSV file response for browser download."),
+                _("SQL and CSV summary"),
+                "summary",
+                str,
+                description=_(
+                    "Executed SQL, row count, optional preview and CSV download tag."
+                ),
             )
         ],
         tags={"order": TAGS_ORDER_HIGH},
@@ -410,32 +423,57 @@ class HODatasourceCsvExportOperator(MapOperator[str, HttpFileDownloadBody]):
         self,
         filename: str = "query_result.csv",
         include_index: bool = False,
+        preview_max_rows: int = 5,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self._filename = filename or "query_result.csv"
         self._include_index = include_index
+        self._preview_max_rows = preview_max_rows
 
-    async def map(self, sql_result: str) -> HttpFileDownloadBody:
-        """Build a CSV download response from the latest query result."""
-        from dbgpt.util.pd_utils import df_to_csv
+    async def map(self, sql_result: str) -> str:
+        """Build chat response with SQL text and optional CSV download."""
+        from dbgpt.core.awel.util.chat_util import http_file_download_body_to_vis_text
+        from dbgpt.util.pd_utils import df_to_csv, df_to_markdown
 
         _ = sql_result
         data_df = await self.current_dag_context.get_from_share_data(
             HODatasourceExecutorOperator._share_data_key
+        )
+        sql = await self.current_dag_context.get_from_share_data(
+            HODatasourceExecutorOperator._share_data_sql_key
         )
         if data_df is None:
             raise ValueError(
                 "No SQL query result found. Please connect this operator after "
                 "Datasource Executor Operator."
             )
+
+        row_count = len(data_df)
+        parts: List[str] = []
+        if sql:
+            parts.append(f"**执行的 SQL：**\n```sql\n{str(sql).strip()}\n```")
+        parts.append(f"**查询结果：**共 {row_count} 行")
+
+        if row_count > 0 and self._preview_max_rows > 0:
+            preview_df = data_df.head(self._preview_max_rows)
+            parts.append(
+                f"**数据预览（前 {min(self._preview_max_rows, row_count)} 行）：**\n"
+                f"{df_to_markdown(preview_df)}"
+            )
+
         csv_content = df_to_csv(data_df, index=self._include_index)
-        return HttpFileDownloadBody(
+        download_body = HttpFileDownloadBody(
             content=csv_content,
             filename=self._filename,
             media_type="text/csv",
             encoding="utf-8-sig",
         )
+        parts.append(http_file_download_body_to_vis_text(download_body))
+
+        summary = "\n\n".join(parts)
+        await self.save_view_message(self.current_dag_context, summary)
+        return summary
 
 
 class HODatasourceDashboardOperator(GPTVisMixin, MapOperator[dict, str]):

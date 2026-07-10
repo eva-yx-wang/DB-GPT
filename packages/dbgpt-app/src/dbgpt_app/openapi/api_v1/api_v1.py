@@ -166,6 +166,16 @@ def get_chat_flow() -> FlowService:
     return FlowService.get_instance(CFG.SYSTEM_APP)
 
 
+def _resolve_dialogue_model_name(model_name: Optional[str]) -> str:
+    """Resolve LLM model name, falling back to default when not provided."""
+    if model_name:
+        return model_name
+    app_config = CFG.SYSTEM_APP.config.configs.get("app_config")
+    if app_config and app_config.models and app_config.models.default_llm:
+        return app_config.models.default_llm
+    return CFG.LLM_MODEL
+
+
 def get_executor() -> Executor:
     """Get the global default executor"""
     return CFG.SYSTEM_APP.get_component(
@@ -576,8 +586,10 @@ async def chat_completions(
                 media_type="text/event-stream",
             )
         elif dialogue.chat_mode == ChatScene.ChatFlow.value():
+            model_name = _resolve_dialogue_model_name(dialogue.model_name)
+            dialogue.model_name = model_name
             flow_req = CommonLLMHttpRequestBody(
-                model=dialogue.model_name,
+                model=model_name,
                 messages=dialogue.user_input,
                 stream=True,
                 conv_uid=dialogue.conv_uid,
@@ -905,8 +917,10 @@ async def chat_with_domain_flow(dialogue: ConversationVo, domain_type: str):
     if len(db_names) == 0:
         raise ValueError(f"fin repost dbname {space}_fin_report not found.")
     flow_ctx = {"space": space, "db_name": db_names[0]}
+    model_name = _resolve_dialogue_model_name(dialogue.model_name)
+    dialogue.model_name = model_name
     request = CommonLLMHttpRequestBody(
-        model=dialogue.model_name,
+        model=model_name,
         messages=dialogue.user_input,
         stream=True,
         extra=flow_ctx,

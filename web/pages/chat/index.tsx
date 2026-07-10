@@ -85,7 +85,7 @@ export const ChatContentContext = createContext<ChatContentProps>({
 });
 
 const Chat: React.FC = () => {
-  const { model, currentDialogInfo } = useContext(ChatContext);
+  const { model, modelList, currentDialogInfo } = useContext(ChatContext);
   const { isContract, setIsContract, setIsMenuExpand } = useContext(ChatContext);
   const { chat, ctrl, contextStatus } = useChat({
     app_code: currentDialogInfo.app_code || '',
@@ -267,9 +267,10 @@ const Chat: React.FC = () => {
         ];
         const index = tempHistory.length - 1;
         setHistory([...tempHistory]);
+        const resolvedModelName = modelValue || model || modelList[0] || '';
         const apiData: Record<string, any> = {
           chat_mode: scene,
-          model_name: modelValue,
+          model_name: resolvedModelName,
           user_input: content,
         };
 
@@ -322,7 +323,7 @@ const Chat: React.FC = () => {
         });
       });
     },
-    [chat, chatId, history, modelValue, scene],
+    [chat, chatId, history, model, modelList, modelValue, scene],
   );
 
   handleChatRef.current = handleChat;

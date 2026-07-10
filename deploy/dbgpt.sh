@@ -13,11 +13,12 @@
 # 注意: 本服务器资源有限，install / check 命令已禁用。
 #
 # 环境变量:
-#   DBGPT_CONFIG      配置文件路径 (默认: configs/dbgpt-proxy-tongyi.toml)
+#   DBGPT_CONFIG      配置文件路径 (默认: configs/dbgpt-proxy-openai.toml)
 #   DBGPT_UV_EXTRAS   uv sync 可选依赖组 (空格分隔)
 #   DBGPT_CONV_LOG_DIR 每对话独立日志目录 (默认: deploy/)
 #   DBGPT_LOG_DIR     服务日志目录 (默认: logs/)
 #   DBGPT_PORT        Web 端口 (默认从配置文件读取, 回退 5670)
+#   OPENAI_API_KEY    OpenAI API Key (使用 openai 配置时需要)
 #   DASHSCOPE_API_KEY 通义 API Key (使用 tongyi 配置时需要)
 
 set -euo pipefail
@@ -25,7 +26,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-DBGPT_CONFIG="${DBGPT_CONFIG:-configs/dbgpt-proxy-tongyi.toml}"
+DBGPT_CONFIG="${DBGPT_CONFIG:-configs/dbgpt-proxy-openai.toml}"
 DBGPT_UV_EXTRAS="${DBGPT_UV_EXTRAS:-base proxy_openai proxy_tongyi rag storage_chromadb dbgpts}"
 DBGPT_CONV_LOG_DIR="${DBGPT_CONV_LOG_DIR:-${PROJECT_DIR}/deploy}"
 DBGPT_LOG_DIR="${DBGPT_LOG_DIR:-${PROJECT_DIR}/logs}"
@@ -169,6 +170,13 @@ check_dbgpt_cli() {
 check_api_key_hint() {
     local config
     config="$(resolve_config_path)"
+    if grep -q "proxy/openai\|OPENAI_API_KEY" "${config}" 2>/dev/null; then
+        if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+            log_warn "未设置 OPENAI_API_KEY，OpenAI 模型调用可能失败"
+        else
+            log_info "OPENAI_API_KEY 已设置"
+        fi
+    fi
     if grep -q "proxy/tongyi\|DASHSCOPE_API_KEY" "${config}" 2>/dev/null; then
         if [[ -z "${DASHSCOPE_API_KEY:-}" ]]; then
             log_warn "未设置 DASHSCOPE_API_KEY，通义模型调用可能失败"
@@ -209,10 +217,28 @@ run_start_preflight() {
         return 1
     fi
     check_api_key_hint || true
+    if [[ -f "${SCRIPT_DIR}/check_llm_api.sh" ]]; then
+        if ! bash "${SCRIPT_DIR}/check_llm_api.sh"; then
+            log_warn "LLM API 自检失败，chat/chat_flow 调用可能返回 [SERVER_ERROR]"
+            log_warn "修复: 在 Windows 重启 cloudflared + LLM 代理，然后:"
+            log_warn "  bash deploy/set_openai_api_base.sh <新隧道URL> --restart"
+        fi
+    fi
     return 0
 }
 
 setup_runtime_env() {
+    if [[ -f "${HOME}/.bashrc" ]]; then
+        # shellcheck disable=SC1090
+        # 关闭 nounset：非交互 source .bashrc 时 /etc/bashrc 可能引用未定义的 PS1
+        set +e
+        set +u
+        set -a
+        source "${HOME}/.bashrc" 2>/dev/null
+        set +a
+        set -u
+        set -e
+    fi
     export DBGPT_CONV_LOG_DIR
     export DBGPT_LOG_DIR
     mkdir -p "${DBGPT_CONV_LOG_DIR}/chat_logs" "${DBGPT_LOG_DIR}"
