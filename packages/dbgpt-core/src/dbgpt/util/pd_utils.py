@@ -22,6 +22,11 @@ def csv_colunm_foramt(val):
         return val
 
 
+def df_to_csv(df: pd.DataFrame, index: bool = False) -> str:
+    """Convert a pandas DataFrame to a CSV string."""
+    return df.to_csv(index=index)
+
+
 def df_to_markdown(df: pd.DataFrame, index=False) -> str:
     """Convert a pandas DataFrame to a Markdown table."""
     columns = df.columns

@@ -189,5 +189,9 @@ class ChatWithDbAutoExecute(BaseChat):
         return input_values
 
     def do_action(self, prompt_response):
-        print(f"do_action:{prompt_response}")
-        return self.database.run_to_df
+        timeout = self.curr_config.sql_query_timeout
+
+        def run_sql_to_df(command: str, fetch: str = "all"):
+            return self.database.run_to_df(command, fetch=fetch, timeout=timeout)
+
+        return run_sql_to_df

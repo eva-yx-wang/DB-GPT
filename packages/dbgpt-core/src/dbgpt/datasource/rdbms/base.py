@@ -443,31 +443,141 @@ class RDBMSConnector(BaseConnector):
             logger.info(f"SQL[{write_sql}], result:{result.rowcount}")
             return result.rowcount
 
-    def _query(self, query: str, fetch: str = "all"):
+    def _fetch_query_rows(
+        self,
+        session: Session,
+        sql_text,
+        query_params: Dict[str, Any],
+        fetch: str,
+    ) -> Tuple[List[str], List]:
+        cursor = session.execute(sql_text, query_params)
+        if cursor.returns_rows:
+            if fetch == "all":
+                result = cursor.fetchall()
+            elif fetch == "one":
+                row = cursor.fetchone()
+                result = [row] if row else []
+            else:
+                raise ValueError("Fetch parameter must be either 'one' or 'all'")
+            field_names = list(cursor.keys())
+            return field_names, list(result)
+        return [], []
+
+    def _execute_query_session(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+        fetch: str = "all",
+        timeout: Optional[float] = None,
+    ) -> Tuple[List[str], Optional[List]]:
+        """Execute a read query in a session with optional timeout."""
+        if not query:
+            return [], None
+        query = self._format_sql(query)
+        if params is None:
+            params = {}
+
+        with self.session_scope() as session:
+            try:
+                sql = text(query)
+                if timeout is not None:
+                    if self.dialect == "mysql":
+                        mysql_timeout = int(timeout * 1000)
+                        session.execute(
+                            text(f"SET SESSION MAX_EXECUTION_TIME = {mysql_timeout}")
+                        )
+                        return self._fetch_query_rows(session, sql, params, fetch)
+
+                    if self.dialect == "postgresql":
+                        session.execute(
+                            text(f"SET statement_timeout = {int(timeout * 1000)}")
+                        )
+                        return self._fetch_query_rows(session, sql, params, fetch)
+
+                    if self.dialect == "oceanbase":
+                        ob_timeout = int(timeout * 1000000)
+                        session.execute(
+                            text(f"SET SESSION ob_query_timeout = {ob_timeout}")
+                        )
+                        return self._fetch_query_rows(session, sql, params, fetch)
+
+                    if self.dialect == "mssql":
+                        sql_with_timeout = sql.execution_options(timeout=int(timeout))
+                        return self._fetch_query_rows(
+                            session, sql_with_timeout, params, fetch
+                        )
+
+                    if self.dialect == "duckdb":
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(
+                                self._fetch_query_rows, session, sql, params, fetch
+                            )
+                            try:
+                                return future.result(timeout=timeout)
+                            except FutureTimeoutError:
+                                raise TimeoutError(
+                                    f"Query exceeded timeout of {timeout} seconds"
+                                )
+
+                    logger.warning(
+                        "Timeout not supported for dialect: %s, proceeding without "
+                        "timeout",
+                        self.dialect,
+                    )
+
+                return self._fetch_query_rows(session, sql, params, fetch)
+
+            except SQLAlchemyError as e:
+                if timeout is not None and (
+                    "timeout" in str(e).lower() or "timed out" in str(e).lower()
+                ):
+                    raise TimeoutError(
+                        f"Query exceeded timeout of {timeout} seconds"
+                    ) from e
+                raise
+            except TimeoutError:
+                raise
+            finally:
+                if timeout is not None:
+                    try:
+                        if self.dialect == "mysql":
+                            session.execute(text("SET SESSION MAX_EXECUTION_TIME = 0"))
+                        elif self.dialect == "postgresql":
+                            session.execute(text("SET statement_timeout = 0"))
+                        elif self.dialect == "oceanbase":
+                            session.execute(
+                                text("SET SESSION ob_query_timeout = 10000000")
+                            )
+                    except Exception as reset_error:
+                        logger.warning(
+                            "Failed to reset timeout settings: %s", reset_error
+                        )
+
+    def _query(
+        self,
+        query: str,
+        fetch: str = "all",
+        timeout: Optional[float] = None,
+    ):
         """Run a SQL query and return the results as a list of tuples.
 
         Args:
             query (str): SQL query to run
             fetch (str): fetch type
+            timeout (Optional[float]): Query timeout in seconds. If None, no timeout is
+                applied.
         """
-        result: List[Any] = []
-
-        logger.info(f"Query[{query}]")
+        logger.info("Query[%s] with timeout=%ss", query, timeout)
         if not query:
-            return result
-        with self.session_scope() as session:
-            cursor = session.execute(text(query))
-            if cursor.returns_rows:
-                if fetch == "all":
-                    result = cursor.fetchall()
-                elif fetch == "one":
-                    result = [cursor.fetchone()]
-                else:
-                    raise ValueError("Fetch parameter must be either 'one' or 'all'")
-                field_names = tuple(i[0:] for i in cursor.keys())
-
-                result.insert(0, field_names)
-                return result
+            return []
+        field_names, rows = self._execute_query_session(
+            query, fetch=fetch, timeout=timeout
+        )
+        if not field_names:
+            return []
+        result = list(rows) if rows else []
+        result.insert(0, tuple(field_names))
+        return result
 
     def query_table_schema(self, table_name: str):
         """Query table schema.
@@ -503,113 +613,10 @@ class RDBMSConnector(BaseConnector):
             SQLAlchemyError: If query execution fails
             TimeoutError: If query exceeds specified timeout
         """
-        logger.info(f"Query[{query}] with timeout={timeout}s")
-        if not query:
-            return [], None
-        query = self._format_sql(query)
-
-        # Initialize params if None
-        if params is None:
-            params = {}
-
-        def _execute_query(session, sql_text, query_params):
-            cursor = session.execute(sql_text, query_params)
-            if cursor.returns_rows:
-                if fetch == "all":
-                    result = cursor.fetchall()
-                elif fetch == "one":
-                    result = cursor.fetchone()
-                    if result:
-                        result = [result]
-                    else:
-                        result = []
-                else:
-                    raise ValueError("Fetch parameter must be either 'one' or 'all'")
-                field_names = list(cursor.keys())
-                return field_names, list(result)
-            return [], None
-
-        with self.session_scope() as session:
-            try:
-                sql = text(query)
-
-                # Handle timeout based on database dialect
-                if timeout is not None:
-                    if self.dialect == "mysql":
-                        # MySQL: Set MAX_EXECUTION_TIME in milliseconds
-                        mysql_timeout = int(timeout * 1000)
-                        session.execute(
-                            text(f"SET SESSION MAX_EXECUTION_TIME = {mysql_timeout}")
-                        )
-                        return _execute_query(session, sql, params)
-
-                    elif self.dialect == "postgresql":
-                        # PostgreSQL: Set statement_timeout in milliseconds
-                        session.execute(
-                            text(f"SET statement_timeout = {int(timeout * 1000)}")
-                        )
-                        return _execute_query(session, sql, params)
-
-                    elif self.dialect == "oceanbase":
-                        # OceanBase: Set ob_query_timeout in microseconds
-                        ob_timeout = int(timeout * 1000000)
-                        session.execute(
-                            text(f"SET SESSION ob_query_timeout = {ob_timeout}")
-                        )
-                        return _execute_query(session, sql, params)
-
-                    elif self.dialect == "mssql":
-                        # MSSQL: Use execution_options if supported by driver
-                        sql_with_timeout = sql.execution_options(timeout=int(timeout))
-                        return _execute_query(session, sql_with_timeout, params)
-
-                    elif self.dialect == "duckdb":
-                        # DuckDB: Use ThreadPoolExecutor for timeout
-                        with ThreadPoolExecutor(max_workers=1) as executor:
-                            future = executor.submit(
-                                _execute_query, session, sql, params
-                            )
-                            try:
-                                return future.result(timeout=timeout)
-                            except FutureTimeoutError:
-                                raise TimeoutError(
-                                    f"Query exceeded timeout of {timeout} seconds"
-                                )
-
-                    else:
-                        logger.warning(
-                            f"Timeout not supported for dialect: {self.dialect}, "
-                            "proceeding without timeout"
-                        )
-                        return _execute_query(session, sql, params)
-
-                # No timeout specified, execute normally
-                return _execute_query(session, sql, params)
-
-            except SQLAlchemyError as e:
-                if "timeout" in str(e).lower() or "timed out" in str(e).lower():
-                    raise TimeoutError(f"Query exceeded timeout of {timeout} seconds")
-                raise
-            except TimeoutError:
-                raise
-            finally:
-                # Reset timeout settings if they were modified
-                if timeout is not None:
-                    try:
-                        if self.dialect == "mysql":
-                            session.execute(text("SET SESSION MAX_EXECUTION_TIME = 0"))
-                        elif self.dialect == "postgresql":
-                            session.execute(text("SET statement_timeout = 0"))
-                        elif self.dialect == "oceanbase":
-                            session.execute(
-                                text("SET SESSION ob_query_timeout = 10000000")
-                            )  # Reset to default 10s
-                        # MSSQL and DuckDB don't need reset as timeout is handled at
-                        # execution level
-                    except Exception as reset_error:
-                        logger.warning(
-                            f"Failed to reset timeout settings: {reset_error}"
-                        )
+        logger.info("Query[%s] with timeout=%ss", query, timeout)
+        return self._execute_query_session(
+            query, params=params, fetch=fetch, timeout=timeout
+        )
 
     def _format_sql(self, sql: str) -> str:
         """Format SQL command."""
@@ -617,7 +624,12 @@ class RDBMSConnector(BaseConnector):
             return sql
         return sql.strip()
 
-    def run(self, command: str, fetch: str = "all") -> List:
+    def run(
+        self,
+        command: str,
+        fetch: str = "all",
+        timeout: Optional[float] = None,
+    ) -> List:
         """Execute a SQL command and return a string representing the results."""
         logger.info("SQL:" + command)
         if not command or len(command) < 0:
@@ -626,12 +638,12 @@ class RDBMSConnector(BaseConnector):
         command = self._format_sql(command)
         if ttype == sqlparse.tokens.DML:
             if sql_type == "SELECT":
-                return self._query(command, fetch)
+                return self._query(command, fetch, timeout=timeout)
             else:
                 self._write(command)
                 select_sql = self.convert_sql_write_to_select(command)
                 logger.info(f"write result query:{select_sql}")
-                return self._query(select_sql)
+                return self._query(select_sql, fetch, timeout=timeout)
 
         else:
             logger.info(
@@ -652,13 +664,18 @@ class RDBMSConnector(BaseConnector):
                 else:
                     return self.get_simple_fields(table_name)
 
-    def run_to_df(self, command: str, fetch: str = "all"):
+    def run_to_df(
+        self,
+        command: str,
+        fetch: str = "all",
+        timeout: Optional[float] = None,
+    ):
         """Execute sql command and return result as dataframe."""
         import pandas as pd
 
         # Pandas has too much dependence and the import time is too long
         # TODO: Remove the dependency on pandas
-        result_lst = self.run(command, fetch)
+        result_lst = self.run(command, fetch, timeout=timeout)
         colunms = result_lst[0]
         values = result_lst[1:]
         return pd.DataFrame(values, columns=colunms)

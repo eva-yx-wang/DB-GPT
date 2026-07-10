@@ -2,6 +2,7 @@ import { ChatContext } from '@/app/chat-context';
 import i18n from '@/app/i18n';
 import { getUserId } from '@/utils';
 import { HEADER_USER_ID_KEY } from '@/utils/constants/index';
+import { normalizeChatFlowMessage } from '@/utils/vis-file-download';
 import { EventStreamContentType, fetchEventSource } from '@microsoft/fetch-event-source';
 import { message } from 'antd';
 import { useCallback, useContext, useRef, useState } from 'react';
@@ -155,9 +156,12 @@ const useChat = ({ queryAgentURL = '/api/v1/chat/completions', app_code }: Props
               }
             }
             if (typeof message === 'string') {
-              if (needReplaceNewline) {
-                message = message.replaceAll('\\n', '\n');
+              const shouldNormalizeNewlines =
+                needReplaceNewline || scene === 'chat_flow' || scene === 'chat_dashboard';
+              if (shouldNormalizeNewlines) {
+                message = normalizeChatFlowMessage(message);
               }
+
               if (message === '[DONE]') {
                 lastMessageRef.current = '';
                 onDone?.();

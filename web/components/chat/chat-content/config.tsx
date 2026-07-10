@@ -12,6 +12,7 @@ import remarkMath from 'remark-math';
 import ReferencesContent from './ReferencesContent';
 import VisAppLink from './VisAppLink';
 import VisChatLink from './VisChatLink';
+import VisFileDownload from './VisFileDownload';
 import VisResponse from './VisResponse';
 import AgentMessages from './agent-messages';
 import AgentPlans from './agent-plans';
@@ -172,6 +173,16 @@ const codeComponents = {
         try {
           const data = JSON.parse(content) as Parameters<typeof VisAppLink>[0]['data'];
           return <VisAppLink data={data} />;
+        } catch {
+          return <CodePreview language={lang} code={content} />;
+        }
+      },
+      'vis-file-download': ({ className, children }) => {
+        const content = String(children);
+        const lang = className?.replace('language-', '') || 'javascript';
+        try {
+          const data = JSON.parse(content) as Parameters<typeof VisFileDownload>[0]['data'];
+          return <VisFileDownload data={data} />;
         } catch {
           return <CodePreview language={lang} code={content} />;
         }

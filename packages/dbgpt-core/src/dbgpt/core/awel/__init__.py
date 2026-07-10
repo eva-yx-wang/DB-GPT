@@ -54,6 +54,7 @@ from .trigger.base import Trigger
 from .trigger.http_trigger import (
     CommonLLMHttpRequestBody,
     CommonLLMHttpResponseBody,
+    HttpFileDownloadBody,
     HttpTrigger,
 )
 from .trigger.iterator_trigger import IteratorTrigger
@@ -107,6 +108,7 @@ __all__ = [
     "IteratorTrigger",
     "CommonLLMHttpResponseBody",
     "CommonLLMHttpRequestBody",
+    "HttpFileDownloadBody",
     "setup_dev_environment",
     "_is_async_iterator",
 ]

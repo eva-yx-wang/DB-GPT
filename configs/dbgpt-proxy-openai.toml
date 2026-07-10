@@ -1,6 +1,7 @@
 [system]
 # Load language from environment variable(It is set by the hook)
 language = "${env:DBGPT_LANG:-zh}"
+log_level = "INFO"
 api_keys = []
 encrypt_key = "your_secret_key"
 
@@ -9,9 +10,36 @@ encrypt_key = "your_secret_key"
 host = "0.0.0.0"
 port = 5670
 
+[service.web.agent_context]
+# Agent context-window budget. Set max_context_tokens to 0 to auto-detect from
+# the selected model's metadata. The effective budget shown in the UI is
+# max_context_tokens - reserved_tokens.
+max_context_tokens = 0
+reserved_tokens = 4096
+warning_threshold = 0.70
+error_threshold = 0.90
+critical_threshold = 0.95
+min_keep_recent_rounds = 3
+max_observation_age_rounds = 5
+truncated_observation_max_chars = 200
+min_keep_tokens = 10000
+max_compact_failures = 3
+
+# DB-GPT METADATA DATABASE设置
 [service.web.database]
 type = "sqlite"
 path = "pilot/meta_data/dbgpt.db"
+
+# vector database
+[rag]
+## 基础配置
+chunk_size = 1000
+chunk_overlap = 0
+similarity_top_k = 5
+similarity_score_threshold = 0.0
+max_chunks_once_load = 10
+max_threads = 1
+rerank_top_k = 3
 
 [rag.storage]
 [rag.storage.vector]
@@ -27,7 +55,7 @@ api_base = "${env:OPENAI_API_BASE:-https://api.openai.com/v1}"
 api_key = "${env:OPENAI_API_KEY}"
 
 [[models.embeddings]]
-name = "${env:EMBEDDING_MODEL_NAME:-text-embedding-3-small}"
-provider = "${env:EMBEDDING_MODEL_PROVIDER:-proxy/openai}"
-api_url = "${env:EMBEDDING_MODEL_API_URL:-https://api.openai.com/v1/embeddings}"
-api_key = "${env:OPENAI_API_KEY}"
+name = "${env:EMBEDDING_MODEL_NAME:-text-embedding-v4}"
+provider = "${env:EMBEDDING_MODEL_PROVIDER:-proxy/tongyi}"
+api_url = "${env:EMBEDDING_MODEL_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings}"
+api_key = "${env:DASHSCOPE_API_KEY}"

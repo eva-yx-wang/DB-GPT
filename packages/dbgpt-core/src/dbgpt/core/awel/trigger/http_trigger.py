@@ -224,6 +224,29 @@ class RequestHttpBody(BaseHttpBody):
 
 
 @register_resource(
+    label=_("HTTP File Download Body"),
+    name="http_file_download_body",
+    category=ResourceCategory.HTTP_BODY,
+    resource_type=ResourceType.CLASS,
+    description=_("HTTP response body for browser file download"),
+)
+class HttpFileDownloadBody(BaseHttpBody):
+    """HTTP response body that triggers a browser file download."""
+
+    content: str = Field(..., description="The file content")
+    filename: str = Field(
+        default="export.csv", description="The download file name"
+    )
+    media_type: str = Field(
+        default="text/csv", description="The response media type"
+    )
+    encoding: str = Field(
+        default="utf-8-sig",
+        description="The text encoding used to encode content to bytes",
+    )
+
+
+@register_resource(
     label=_("Common LLM Http Request Body"),
     name="common_llm_http_request_body",
     category=ResourceCategory.HTTP_BODY,
@@ -611,6 +634,7 @@ class HttpTrigger(Trigger):
                 streaming_response,
                 self._response_headers,
                 self._response_media_type,
+                self._status_code,
             )
 
         def create_route_function(name, req_body_cls: Optional["RequestBody"]):
@@ -703,12 +727,50 @@ class HttpTrigger(Trigger):
         return dynamic_route_function
 
 
+def _build_http_file_download_response(
+    file_body: "HttpFileDownloadBody",
+    response_headers: Optional[Dict[str, str]] = None,
+    status_code: Optional[int] = 200,
+) -> Any:
+    from urllib.parse import quote
+
+    from starlette.responses import Response
+
+    content_bytes = file_body.content.encode(file_body.encoding)
+    filename = file_body.filename or "export.csv"
+    encoded_filename = quote(filename)
+    headers = dict(response_headers or {})
+    headers.setdefault(
+        "Content-Disposition",
+        f'attachment; filename="{filename}"; filename*=UTF-8\'\'{encoded_filename}',
+    )
+    return Response(
+        content=content_bytes,
+        media_type=file_body.media_type or "application/octet-stream",
+        headers=headers,
+        status_code=status_code or 200,
+    )
+
+
+def _wrap_http_trigger_result(
+    result: Any,
+    response_headers: Optional[Dict[str, str]] = None,
+    status_code: Optional[int] = 200,
+) -> Any:
+    if isinstance(result, HttpFileDownloadBody):
+        return _build_http_file_download_response(
+            result, response_headers=response_headers, status_code=status_code
+        )
+    return result
+
+
 async def _trigger_dag(
     body: Any,
     dag: DAG,
     streaming_response: Optional[bool] = False,
     response_headers: Optional[Dict[str, str]] = None,
     response_media_type: Optional[str] = None,
+    status_code: Optional[int] = 200,
 ) -> Any:
     from fastapi import BackgroundTasks
     from fastapi.responses import StreamingResponse
@@ -727,7 +789,10 @@ async def _trigger_dag(
         with root_tracer.start_span(
             "dbgpt.core.trigger.http.run_dag", span_id, metadata=metadata
         ):
-            return await end_node.call(call_data=body)
+            result = await end_node.call(call_data=body)
+            return _wrap_http_trigger_result(
+                result, response_headers=response_headers, status_code=status_code
+            )
     else:
         headers = response_headers
         media_type = response_media_type if response_media_type else "text/event-stream"

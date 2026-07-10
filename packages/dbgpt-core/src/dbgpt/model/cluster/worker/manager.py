@@ -309,6 +309,14 @@ class LocalWorkerManager(WorkerManager):
             self.add_worker, worker, worker_params, deploy_params
         )
         if not success:
+            worker_key = self._worker_key(worker_type.value, model_name)
+            if self.workers.get(worker_key):
+                logger.info(
+                    "Worker %s@%s already registered, skip duplicate startup",
+                    model_name,
+                    worker_type,
+                )
+                return
             msg = f"Add worker {model_name}@{worker_type}, worker instances is exist"
             logger.warning(f"{msg}, worker_params: {worker_params}")
             self._remove_worker(worker_params, model_name)

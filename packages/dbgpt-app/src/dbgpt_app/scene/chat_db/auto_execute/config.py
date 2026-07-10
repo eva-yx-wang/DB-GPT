@@ -32,6 +32,15 @@ class ChatWithDBExecuteConfig(GPTsAppCommonConfig):
         default=50,
         metadata={"help": _("The maximum number of results to return from the query.")},
     )
+    sql_query_timeout: Optional[float] = field(
+        default=30,
+        metadata={
+            "help": _(
+                "SQL query timeout in seconds for Text2SQL execution. "
+                "Set to null/None to disable."
+            )
+        },
+    )
     memory: Optional[BaseGPTsAppMemoryConfig] = field(
         default_factory=lambda: BufferWindowGPTsAppMemoryConfig(
             keep_start_rounds=0, keep_end_rounds=10

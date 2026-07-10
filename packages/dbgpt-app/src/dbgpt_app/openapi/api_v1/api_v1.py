@@ -166,6 +166,16 @@ def get_chat_flow() -> FlowService:
     return FlowService.get_instance(CFG.SYSTEM_APP)
 
 
+def _resolve_dialogue_model_name(model_name: Optional[str]) -> str:
+    """Resolve LLM model name, falling back to default when not provided."""
+    if model_name:
+        return model_name
+    app_config = CFG.SYSTEM_APP.config.configs.get("app_config")
+    if app_config and app_config.models and app_config.models.default_llm:
+        return app_config.models.default_llm
+    return CFG.LLM_MODEL
+
+
 def get_executor() -> Executor:
     """Get the global default executor"""
     return CFG.SYSTEM_APP.get_component(
@@ -576,8 +586,10 @@ async def chat_completions(
                 media_type="text/event-stream",
             )
         elif dialogue.chat_mode == ChatScene.ChatFlow.value():
+            model_name = _resolve_dialogue_model_name(dialogue.model_name)
+            dialogue.model_name = model_name
             flow_req = CommonLLMHttpRequestBody(
-                model=dialogue.model_name,
+                model=model_name,
                 messages=dialogue.user_input,
                 stream=True,
                 conv_uid=dialogue.conv_uid,
@@ -609,7 +621,13 @@ async def chat_completions(
 
             if not chat.prompt_template.stream_out:
                 return StreamingResponse(
-                    no_stream_generator(chat, dialogue.model_name, dialogue.conv_uid),
+                    no_stream_generator(
+                        chat,
+                        dialogue.model_name,
+                        dialogue.conv_uid,
+                        app_code=dialogue.app_code,
+                        chat_mode=dialogue.chat_mode,
+                    ),
                     headers=headers,
                     media_type="text/event-stream",
                 )
@@ -621,6 +639,8 @@ async def chat_completions(
                         dialogue.model_name,
                         openai_format=dialogue.incremental,
                         conv_uid=dialogue.conv_uid,
+                        app_code=dialogue.app_code,
+                        chat_mode=dialogue.chat_mode,
                     ),
                     headers=headers,
                     media_type="text/plain",
@@ -732,8 +752,20 @@ async def flow_stream_generator(func, incremental: bool, model_name: str):
         yield "data: [DONE]\n\n"
 
 
-async def no_stream_generator(chat, model_name: str, conv_uid: Optional[str] = None):
-    conv_handler = add_conv_log_handler(conv_uid)
+async def no_stream_generator(
+    chat,
+    model_name: str,
+    conv_uid: Optional[str] = None,
+    app_code: Optional[str] = None,
+    chat_mode: Optional[str] = None,
+    chat_param: Optional[str] = None,
+):
+    conv_handler = add_conv_log_handler(
+        conv_uid,
+        app_code=app_code,
+        chat_mode=chat_mode,
+        chat_param=chat_param,
+    )
     try:
         with root_tracer.start_span("no_stream_generator"):
             msg = await chat.nostream_call()
@@ -750,6 +782,9 @@ async def stream_generator(
     text_output: bool = True,
     openai_format: bool = False,
     conv_uid: Optional[str] = None,
+    app_code: Optional[str] = None,
+    chat_mode: Optional[str] = None,
+    chat_param: Optional[str] = None,
 ):
     """Generate streaming responses
 
@@ -770,7 +805,12 @@ async def stream_generator(
     msg = "[LLM_ERROR]: llm server has no output, maybe your prompt template is wrong."
 
     stream_id = conv_uid or f"chatcmpl-{str(uuid.uuid1())}"
-    conv_handler = add_conv_log_handler(conv_uid)
+    conv_handler = add_conv_log_handler(
+        conv_uid,
+        app_code=app_code,
+        chat_mode=chat_mode,
+        chat_param=chat_param,
+    )
     try:
         if incremental and not openai_format:
             raise ValueError("Incremental response must be openai-compatible format.")
@@ -877,8 +917,10 @@ async def chat_with_domain_flow(dialogue: ConversationVo, domain_type: str):
     if len(db_names) == 0:
         raise ValueError(f"fin repost dbname {space}_fin_report not found.")
     flow_ctx = {"space": space, "db_name": db_names[0]}
+    model_name = _resolve_dialogue_model_name(dialogue.model_name)
+    dialogue.model_name = model_name
     request = CommonLLMHttpRequestBody(
-        model=dialogue.model_name,
+        model=model_name,
         messages=dialogue.user_input,
         stream=True,
         extra=flow_ctx,
