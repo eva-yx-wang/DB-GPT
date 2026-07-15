@@ -59,7 +59,9 @@ const Completion = ({ messages, onSubmit, onFormatContent }: Props) => {
       case 'chat_excel':
         return currentDialogue?.select_param;
       case 'chat_flow':
-        return flowSelectParam;
+        // URL param from "start chat" entry; fall back to dialogue record when
+        // reopening history (sidebar often omits select_param in the query string).
+        return flowSelectParam || currentDialogue?.select_param || '';
       default:
         return spaceNameOriginal || dbParam;
     }

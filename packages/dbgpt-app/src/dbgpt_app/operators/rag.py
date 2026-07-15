@@ -1,4 +1,6 @@
-from typing import List, Optional
+import json
+import logging
+from typing import List, Optional, Tuple
 
 from dbgpt._private.config import Config
 from dbgpt.core import Chunk
@@ -19,6 +21,7 @@ from dbgpt_serve.rag.retriever.knowledge_space import KnowledgeSpaceRetriever
 from .llm import HOContextBody
 
 CFG = Config()
+logger = logging.getLogger(__name__)
 
 
 def _load_space_name() -> List[OptionValue]:
@@ -79,6 +82,28 @@ _PARAMETER_RE_RANKER_TOP_K = Parameter.build_from(
     default=3,
     description=_("The top k for the reranker"),
 )
+_PARAMETER_QUERY_REWRITE_ENABLED = Parameter.build_from(
+    _("Query Rewrite Enabled"),
+    "query_rewrite_enabled",
+    type=bool,
+    optional=True,
+    default=False,
+    description=_(
+        "Whether to rewrite the user question with the default LLM before retrieval; "
+        "both the original and rewritten queries will be used for vector search"
+    ),
+)
+_PARAMETER_USE_SPACE_RETRIEVAL_CONFIG = Parameter.build_from(
+    _("Use Space Retrieval Config"),
+    "use_space_retrieval_config",
+    type=bool,
+    optional=True,
+    default=True,
+    description=_(
+        "Whether to use top_k / recall_score from the knowledge space config when "
+        "operator retrieval params are not set"
+    ),
+)
 
 _INPUTS_QUESTION = IOField.build_from(
     _("User question"),
@@ -92,6 +117,27 @@ _OUTPUTS_CONTEXT = IOField.build_from(
     HOContextBody,
     description=_("The retrieved context from the knowledge space"),
 )
+
+
+def _parse_space_retrieval_config(space) -> Tuple[Optional[int], Optional[float]]:
+    """Read topk / recall_score from knowledge space embedding config."""
+    if not space or not space.context:
+        return None, None
+    try:
+        context = json.loads(space.context)
+        embedding = context.get("embedding") or {}
+        top_k = embedding.get("topk")
+        recall_score = embedding.get("recall_score")
+        parsed_top_k = int(top_k) if top_k is not None and str(top_k) != "" else None
+        parsed_score = (
+            float(recall_score)
+            if recall_score is not None and str(recall_score) != ""
+            else None
+        )
+        return parsed_top_k, parsed_score
+    except Exception as e:
+        logger.warning(f"Failed to parse knowledge space retrieval config: {e}")
+        return None, None
 
 
 class HOKnowledgeOperator(MapOperator[str, HOContextBody]):
@@ -124,6 +170,8 @@ class HOKnowledgeOperator(MapOperator[str, HOContextBody]):
             _PARAMETER_SCORE_THRESHOLD.new(),
             _PARAMETER_RE_RANKER_ENABLED.new(),
             _PARAMETER_RE_RANKER_TOP_K.new(),
+            _PARAMETER_QUERY_REWRITE_ENABLED.new(),
+            _PARAMETER_USE_SPACE_RETRIEVAL_CONFIG.new(),
         ],
         inputs=[
             _INPUTS_QUESTION.new(),
@@ -150,6 +198,8 @@ class HOKnowledgeOperator(MapOperator[str, HOContextBody]):
         score_threshold: Optional[float] = None,
         reranker_enabled: Optional[bool] = None,
         reranker_top_k: Optional[int] = None,
+        query_rewrite_enabled: Optional[bool] = False,
+        use_space_retrieval_config: Optional[bool] = True,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -159,9 +209,17 @@ class HOKnowledgeOperator(MapOperator[str, HOContextBody]):
         self._score_threshold = score_threshold
         self._reranker_enabled = reranker_enabled
         self._reranker_top_k = reranker_top_k
+        self._query_rewrite_enabled = bool(query_rewrite_enabled)
+        self._use_space_retrieval_config = (
+            True if use_space_retrieval_config is None else bool(use_space_retrieval_config)
+        )
 
+        from dbgpt.component import ComponentType
+        from dbgpt.model import DefaultLLMClient
+        from dbgpt.model.cluster import WorkerManagerFactory
         from dbgpt.rag.embedding.embedding_factory import RerankEmbeddingFactory
         from dbgpt.rag.retriever.rerank import RerankEmbeddingsRanker
+        from dbgpt.rag.retriever.rewrite import QueryRewrite
         from dbgpt_serve.rag.models.models import (
             KnowledgeSpaceDao,
             KnowledgeSpaceEntity,
@@ -173,6 +231,17 @@ class HOKnowledgeOperator(MapOperator[str, HOContextBody]):
         if len(spaces) != 1:
             raise Exception(f"invalid space name: {knowledge_space}")
         space = spaces[0]
+
+        space_top_k, space_score = _parse_space_retrieval_config(space)
+        if self._use_space_retrieval_config:
+            if self._top_k is None and space_top_k is not None:
+                self._top_k = space_top_k
+            if self._score_threshold is None and space_score is not None:
+                self._score_threshold = space_score
+        if self._top_k is None:
+            self._top_k = 5
+        if self._score_threshold is None:
+            self._score_threshold = 0.3
 
         reranker: Optional[RerankEmbeddingsRanker] = None
 
@@ -191,9 +260,30 @@ class HOKnowledgeOperator(MapOperator[str, HOContextBody]):
                 # we need to set it to 20
                 self._top_k = max(reranker_top_k, 20)
 
+        query_rewrite = None
+        if self._query_rewrite_enabled:
+            worker_manager = self.system_app.get_component(
+                ComponentType.WORKER_MANAGER_FACTORY, WorkerManagerFactory
+            ).create()
+            llm_client = DefaultLLMClient(worker_manager, True)
+            language = "zh"
+            try:
+                language = self.system_app.config.get_current_lang() or "zh"
+            except Exception:
+                pass
+            import os
+
+            model_name = os.getenv("LLM_MODEL_NAME") or CFG.LLM_MODEL
+            query_rewrite = QueryRewrite(
+                llm_client=llm_client,
+                model_name=model_name,
+                language=language,
+            )
+
         self._space_retriever = KnowledgeSpaceRetriever(
             space_id=space.id,
             top_k=self._top_k,
+            query_rewrite=query_rewrite,
             rerank=reranker,
             system_app=self.system_app,
         )

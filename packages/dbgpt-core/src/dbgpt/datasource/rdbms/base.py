@@ -624,6 +624,51 @@ class RDBMSConnector(BaseConnector):
             return sql
         return sql.strip()
 
+    _COMMENT_SWALLOWED_SQL_RE = re.compile(
+        r"^(--\s*.*?)(\b(?:WITH|SELECT|INSERT|UPDATE|DELETE)\b[\s\S]*)$",
+        re.IGNORECASE,
+    )
+
+    def _recover_comment_swallowed_sql(self, sql: str) -> str:
+        """Recover SQL when a leading ``--`` comment swallows WITH/SELECT on same line.
+
+        Example bad SQL from LLM/RAG templates::
+
+            -- <comment> WITH ...  SELECT ...
+
+        The whole statement becomes a single-line comment, so sqlparse yields
+        ``UNKNOWN`` and execution falls into ``SHOW COLUMNS FROM None``.
+        """
+        if not sql:
+            return sql
+        text_sql = sql.strip()
+        match = self._COMMENT_SWALLOWED_SQL_RE.match(text_sql)
+        if not match:
+            return sql
+        recovered = f"{match.group(1).rstrip()}\n{match.group(2)}"
+        logger.warning(
+            "Recovered SQL that was swallowed by a leading line comment "
+            "(inserted newline before %s)",
+            match.group(2).split(None, 1)[0],
+        )
+        return recovered
+
+    def _should_run_as_query(self, ttype, sql_type: str, command: str) -> bool:
+        """Whether the statement should be executed as a result-returning query."""
+        if sql_type == "SELECT":
+            return True
+        if ttype == sqlparse.tokens.DML and sql_type == "SELECT":
+            return True
+        # WITH ... SELECT (CTE): first token is Keyword.CTE, not DML
+        if ttype is getattr(sqlparse.tokens.Keyword, "CTE", None):
+            return True
+        try:
+            stripped = sqlparse.format(command, strip_comments=True).strip()
+        except Exception:
+            stripped = command.lstrip()
+        upper = stripped.upper()
+        return upper.startswith(("WITH", "SELECT", "("))
+
     def run(
         self,
         command: str,
@@ -634,35 +679,34 @@ class RDBMSConnector(BaseConnector):
         logger.info("SQL:" + command)
         if not command or len(command) < 0:
             return []
-        parsed, ttype, sql_type, table_name = self.__sql_parse(command)
         command = self._format_sql(command)
-        if ttype == sqlparse.tokens.DML:
-            if sql_type == "SELECT":
-                return self._query(command, fetch, timeout=timeout)
-            else:
-                self._write(command)
-                select_sql = self.convert_sql_write_to_select(command)
-                logger.info(f"write result query:{select_sql}")
-                return self._query(select_sql, fetch, timeout=timeout)
+        command = self._recover_comment_swallowed_sql(command)
+        parsed, ttype, sql_type, table_name = self.__sql_parse(command)
 
-        else:
-            logger.info(
-                "DDL execution determines whether to enable through configuration "
-            )
-            with self.session_scope(commit=False) as session:
-                cursor = session.execute(text(command))
-                if cursor.returns_rows:
-                    result = cursor.fetchall()
-                    field_names = tuple(i[0:] for i in cursor.keys())
-                    result = list(result)
-                    result.insert(0, field_names)
-                    logger.info("DDL Result:" + str(result))
-                    if not result:
-                        # return self._query(f"SHOW COLUMNS FROM {table_name}")
-                        return self.get_simple_fields(table_name)
-                    return result
-                else:
+        if self._should_run_as_query(ttype, sql_type, command):
+            return self._query(command, fetch, timeout=timeout)
+
+        if ttype == sqlparse.tokens.DML:
+            self._write(command)
+            select_sql = self.convert_sql_write_to_select(command)
+            logger.info(f"write result query:{select_sql}")
+            return self._query(select_sql, fetch, timeout=timeout)
+
+        logger.info(
+            "DDL execution determines whether to enable through configuration "
+        )
+        with self.session_scope(commit=False) as session:
+            cursor = session.execute(text(command))
+            if cursor.returns_rows:
+                result = cursor.fetchall()
+                field_names = tuple(i[0:] for i in cursor.keys())
+                result = list(result)
+                result.insert(0, field_names)
+                logger.info("DDL Result:" + str(result))
+                if not result:
                     return self.get_simple_fields(table_name)
+                return result
+            return self.get_simple_fields(table_name)
 
     def run_to_df(
         self,
@@ -768,8 +812,9 @@ class RDBMSConnector(BaseConnector):
         else:
             table_name = parsed.get_name()
 
-        first_token = parsed.token_first(skip_ws=True, skip_cm=False)
-        ttype = first_token.ttype
+        # Skip comments so leading `-- remark` does not hide SELECT/WITH as non-DML.
+        first_token = parsed.token_first(skip_ws=True, skip_cm=True)
+        ttype = first_token.ttype if first_token is not None else None
         logger.info(
             f"SQL:{sql}, ttype:{ttype}, sql_type:{sql_type}, table:{table_name}"
         )
@@ -818,6 +863,11 @@ class RDBMSConnector(BaseConnector):
 
     def get_simple_fields(self, table_name):
         """Get column fields about specified table."""
+        if not table_name or str(table_name).strip().lower() in {"none", "null"}:
+            logger.warning(
+                "Skip SHOW COLUMNS because table_name is empty/invalid: %r", table_name
+            )
+            return []
         return self._query(f"SHOW COLUMNS FROM {table_name}")
 
     def get_charset(self) -> str:

@@ -37,7 +37,11 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
 
   const searchParams = useSearchParams();
   const scene = searchParams?.get('scene') ?? '';
-  const select_param = searchParams?.get('select_param') ?? '';
+  const urlSelectParam = searchParams?.get('select_param') ?? '';
+  // chat_flow: keep flow uid when history reopen drops it from the URL.
+  const select_param =
+    urlSelectParam ||
+    (scene === 'chat_flow' ? currentDialogue?.select_param || '' : '');
 
   const [userInput, setUserInput] = useState<string>('');
   const [isFocus, setIsFocus] = useState<boolean>(false);

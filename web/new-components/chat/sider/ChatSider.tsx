@@ -94,7 +94,16 @@ const MenuItem: React.FC<{
             app_code: item.app_code,
           }),
         );
-        router.push(item.default ? '/chat' : `?scene=${item.chat_mode}&id=${item.conv_uid}`);
+        if (item.default) {
+          router.push('/chat');
+        } else if (item.chat_mode === 'chat_flow' && item.select_param) {
+          // Preserve flow uid so reopen-from-history does not send empty select_param.
+          router.push(
+            `?scene=${item.chat_mode}&id=${item.conv_uid}&select_param=${encodeURIComponent(item.select_param)}`,
+          );
+        } else {
+          router.push(`?scene=${item.chat_mode}&id=${item.conv_uid}`);
+        }
       }}
     >
       <Tooltip title={item.chat_mode}>
